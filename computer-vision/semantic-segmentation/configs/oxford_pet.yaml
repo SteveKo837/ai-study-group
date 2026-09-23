@@ -1,0 +1,52 @@
+project:
+  seed: 42
+  num_classes: 2
+  ignore_index: 255
+  output_dir: outputs_oxford_pet
+
+data:
+  dataset: oxford_pet
+  root: data
+  image_size: 256
+  # Oxford Pet has trainval/test. We split trainval into train and val.
+  val_fraction_from_trainval: 0.2
+  num_workers: 2
+  batch_size: 4
+  download: true
+  augmentation:
+    horizontal_flip: true
+    rotation_degrees: 15
+    # Scale jitter implements both zoom out and zoom in.
+    # < 1.0 zooms out then pads; > 1.0 zooms in then crops.
+    scale_min: 0.75
+    scale_max: 1.35
+
+traditional_cv:
+  # Use null to evaluate the full split. A small cap keeps the intentionally
+  # slow handcrafted baseline practical for live demos.
+  max_images_per_split: null
+  blur_kernel: 5
+  sobel_threshold: 70
+  min_component_area: 80
+
+unet:
+  epochs: 100
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  base_channels: 32
+  checkpoint: outputs_oxford_pet/checkpoints/unet_best.pt
+  early_stopping:
+    monitor: val_dice_score
+    patience: 5
+    min_delta: 0.0
+
+transformer:
+  model_name: nvidia/segformer-b0-finetuned-ade-512-512
+  epochs: 100
+  learning_rate: 0.00006
+  weight_decay: 0.01
+  checkpoint_dir: outputs_oxford_pet/checkpoints/segformer_pet
+  early_stopping:
+    monitor: val_dice_score
+    patience: 5
+    min_delta: 0.0

@@ -1,0 +1,53 @@
+project:
+  seed: 42
+  num_classes: 21
+  ignore_index: 255
+  output_dir: outputs
+
+data:
+  root: data
+  image_size: 256
+  # VOC2012 publishes segmentation labels for train/val. The official test
+  # labels are hidden, so this project splits the labeled val set into
+  # validation and a local demonstration test set.
+  val_fraction_from_official_val: 0.5
+  num_workers: 2
+  batch_size: 4
+  download: true
+  augmentation:
+    horizontal_flip: true
+    rotation_degrees: 10
+    # Scale jitter implements both zoom out and zoom in.
+    # < 1.0 zooms out then pads; > 1.0 zooms in then crops.
+    scale_min: 0.8
+    scale_max: 1.25
+
+traditional_cv:
+  # Use null to evaluate the full split. A small cap keeps the intentionally
+  # slow handcrafted baseline practical for live demos.
+  max_images_per_split: 30
+  blur_kernel: 5
+  sobel_threshold: 70
+  min_component_area: 80
+
+unet:
+  epochs: 5
+  learning_rate: 0.0003
+  weight_decay: 0.0001
+  base_channels: 32
+  checkpoint: outputs/checkpoints/unet_best.pt
+  early_stopping:
+    monitor: val_dice_score
+    patience: 5
+    min_delta: 0.0
+
+transformer:
+  model_name: nvidia/segformer-b0-finetuned-ade-512-512
+  epochs: 3
+  learning_rate: 0.00006
+  weight_decay: 0.01
+  checkpoint_dir: outputs/checkpoints/segformer_voc
+  early_stopping:
+    monitor: val_dice_score
+    patience: 5
+    min_delta: 0.0
