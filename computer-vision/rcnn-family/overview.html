@@ -1,0 +1,1395 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>From Fast R-CNN to Mask R-CNN</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --ink: #f8fafc;
+      --muted: #a7b0c7;
+      --accent: #60a5fa;
+      --accent2: #a78bfa;
+      --accent3: #34d399;
+      --danger: #fb7185;
+      --warning: #facc15;
+      --card: rgba(255,255,255,0.08);
+      --line: rgba(255,255,255,0.18);
+      --shadow: 0 24px 70px rgba(0,0,0,0.35);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body { width: 100%; height: 100%; }
+
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at 20% 10%, rgba(96,165,250,0.25), transparent 25%),
+        radial-gradient(circle at 80% 20%, rgba(167,139,250,0.25), transparent 28%),
+        linear-gradient(135deg, #070a13, var(--bg));
+      color: var(--ink);
+      overflow: hidden;
+    }
+
+    .deck {
+      width: 100vw;
+      height: 100vh;
+      display: grid;
+      place-items: center;
+    }
+
+    .slide {
+      width: min(96vw, 1440px);
+      aspect-ratio: 16 / 9;
+      max-height: 96vh;
+      padding: clamp(36px, 4.3vw, 62px) clamp(42px, 5.2vw, 74px);
+      display: none;
+      position: relative;
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 32px;
+      background: linear-gradient(145deg, rgba(15,23,42,0.96), rgba(15,23,42,0.76));
+      box-shadow: var(--shadow);
+    }
+
+    .slide.active { display: block; }
+
+    .slide::after {
+      content: "";
+      position: absolute;
+      inset: auto -15% -55% auto;
+      width: 520px;
+      height: 520px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(96,165,250,0.2), transparent 70%);
+      pointer-events: none;
+    }
+
+    h1, h2, h3, p { margin: 0; }
+    h1 { font-size: clamp(48px, 5.35vw, 76px); line-height: 0.98; letter-spacing: -0.055em; }
+    h2 { font-size: clamp(34px, 3.55vw, 50px); line-height: 1.04; letter-spacing: -0.04em; margin-bottom: clamp(18px, 2vw, 26px); }
+    h3 { font-size: clamp(20px, 1.9vw, 26px); letter-spacing: -0.02em; margin-bottom: 10px; }
+    p, li { font-size: clamp(17px, 1.65vw, 23px); line-height: 1.42; color: var(--muted); }
+    ul { padding-left: 24px; margin: 12px 0 0; }
+    li { margin: 8px 0; }
+
+    .subtitle { font-size: clamp(22px, 2.25vw, 31px); margin-top: 24px; max-width: 900px; color: #cbd5e1; }
+    .small { font-size: 16px; color: var(--muted); }
+
+    .kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      font-size: clamp(13px, 1.2vw, 17px);
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      color: #bfdbfe;
+      margin-bottom: clamp(14px, 1.8vw, 22px);
+    }
+
+    .kicker::before {
+      content: "";
+      width: 12px;
+      height: 12px;
+      border-radius: 999px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      box-shadow: 0 0 24px rgba(96,165,250,0.8);
+    }
+
+    .grid { display: grid; gap: clamp(16px, 1.7vw, 24px); }
+    .grid.two { grid-template-columns: minmax(0, 1.02fr) minmax(0, 0.98fr); align-items: center; }
+    .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 26px;
+      padding: clamp(18px, 1.9vw, 26px);
+      backdrop-filter: blur(20px);
+      min-width: 0;
+    }
+
+    .card strong { color: var(--ink); }
+
+    .big-number {
+      font-size: clamp(40px, 4.2vw, 58px);
+      font-weight: 900;
+      letter-spacing: -0.06em;
+      color: white;
+      margin-bottom: 8px;
+    }
+
+    .tag {
+      display: inline-flex;
+      padding: 8px 12px;
+      border-radius: 999px;
+      font-size: 14px;
+      font-weight: 800;
+      background: rgba(96,165,250,0.14);
+      color: #bfdbfe;
+      border: 1px solid rgba(96,165,250,0.26);
+      margin-bottom: 12px;
+      white-space: nowrap;
+    }
+
+    .quote {
+      font-size: clamp(28px, 2.75vw, 38px);
+      line-height: 1.25;
+      letter-spacing: -0.035em;
+      color: white;
+      max-width: 980px;
+    }
+
+    .highlight { color: #93c5fd; }
+
+    .hero-shape {
+      position: absolute;
+      right: clamp(44px, 5.4vw, 76px);
+      bottom: clamp(54px, 5vw, 70px);
+      width: clamp(330px, 31vw, 430px);
+      height: clamp(240px, 23vw, 310px);
+      border-radius: 36px;
+      border: 1px solid rgba(255,255,255,0.16);
+      background: linear-gradient(135deg, rgba(96,165,250,0.2), rgba(167,139,250,0.18));
+      box-shadow: inset 0 0 90px rgba(255,255,255,0.06);
+      transform: rotate(-3deg);
+    }
+
+    .box {
+      position: absolute;
+      border: 4px solid #60a5fa;
+      border-radius: 18px;
+      background: rgba(96,165,250,0.08);
+    }
+
+    .mask {
+      position: absolute;
+      border-radius: 50% 42% 48% 45%;
+      background: rgba(52,211,153,0.42);
+      border: 3px solid rgba(52,211,153,0.95);
+      filter: blur(0.1px);
+    }
+
+    .dot {
+      position: absolute;
+      width: 34px;
+      height: 34px;
+      border-radius: 999px;
+      background: rgba(248,250,252,0.18);
+      border: 1px solid rgba(255,255,255,0.18);
+    }
+
+    /* Compact timeline. Numbered steps avoid arrow overlap on narrow slides. */
+    .pipeline {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 22px;
+      margin-top: 20px;
+      position: relative;
+      counter-reset: timeline-step;
+    }
+
+    .pipeline > .arrow { display: none; }
+
+    .stage {
+      position: relative;
+      min-height: 118px;
+      border-radius: 24px;
+      padding: 22px 20px 20px;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.18);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      min-width: 0;
+    }
+
+    .stage::before {
+      counter-increment: timeline-step;
+      content: counter(timeline-step);
+      width: 32px;
+      height: 32px;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      font-size: 16px;
+      font-weight: 900;
+      color: white;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      box-shadow: 0 10px 24px rgba(0,0,0,0.22);
+      margin-bottom: 14px;
+      flex: 0 0 auto;
+    }
+
+    .stage-title { font-size: clamp(18px, 1.65vw, 23px); font-weight: 900; color: var(--ink); margin-bottom: 8px; }
+    .stage-desc { font-size: clamp(14px, 1.2vw, 17px); color: var(--muted); line-height: 1.35; }
+
+    .timeline-note {
+      margin-top: 22px;
+      padding: 18px 22px;
+    }
+
+    .timeline-note p {
+      font-size: clamp(15px, 1.35vw, 19px);
+      line-height: 1.32;
+    }
+
+    /* Fixed flow diagrams: no absolute arrow coordinates. */
+    .diagram-canvas {
+      min-height: 400px;
+      border-radius: 32px;
+      border: 1px solid rgba(255,255,255,0.14);
+      background: linear-gradient(160deg, rgba(2,6,23,0.78), rgba(30,41,59,0.64));
+      position: relative;
+      overflow: hidden;
+      padding: 24px;
+      display: grid;
+      align-items: center;
+      isolation: isolate;
+    }
+
+    .flow-row {
+      width: 100%;
+      display: grid;
+      grid-template-columns: minmax(94px, 0.8fr) 38px minmax(150px, 1.25fr) 38px minmax(110px, 0.95fr);
+      gap: 12px;
+      align-items: center;
+    }
+
+    .flow-row.wide {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      align-items: center;
+      column-gap: 12px;
+      row-gap: 16px;
+    }
+
+    .flow-row.wide > .flow-box,
+    .flow-row.wide > .head-stack {
+      flex: 0 1 138px;
+      max-width: 154px;
+    }
+
+    .flow-row.wide > .flow-arrow {
+      flex: 0 0 34px;
+    }
+
+    .flow-box {
+      min-height: 78px;
+      border-radius: 22px;
+      padding: 17px 15px;
+      background: rgba(255,255,255,0.1);
+      border: 1px solid rgba(255,255,255,0.2);
+      text-align: center;
+      font-weight: 900;
+      color: #fff;
+      box-shadow: 0 18px 40px rgba(0,0,0,0.22);
+      display: grid;
+      place-items: center;
+      line-height: 1.08;
+      min-width: 0;
+    }
+
+    .flow-box span {
+      display: block;
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--muted);
+      margin-top: 5px;
+    }
+
+    .proposal-stack,
+    .head-stack {
+      display: grid;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .proposal-stack .flow-box { min-height: 66px; }
+    .head-stack .flow-box { min-height: 88px; }
+
+    .flow-arrow {
+      width: 34px;
+      height: 34px;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      justify-self: center;
+      color: white;
+      font-weight: 900;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      box-shadow: 0 10px 24px rgba(0,0,0,0.2);
+    }
+
+    .compact-flow {
+      width: 100%;
+      display: grid;
+      gap: 14px;
+      align-items: center;
+      justify-items: stretch;
+    }
+
+    .compact-flow-main {
+      display: grid;
+      grid-template-columns: minmax(98px, 1fr) 34px minmax(118px, 1fr) 34px minmax(118px, 1fr);
+      gap: 12px;
+      align-items: center;
+    }
+
+    .compact-flow-bottom {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(120px, 160px));
+      gap: 14px;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .compact-flow-bottom.single {
+      grid-template-columns: minmax(140px, 180px);
+    }
+
+    .down-arrow {
+      width: 34px;
+      height: 34px;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      justify-self: center;
+      color: white;
+      font-weight: 900;
+      background: linear-gradient(135deg, var(--accent2), var(--accent3));
+      box-shadow: 0 10px 24px rgba(0,0,0,0.2);
+    }
+
+    .flow-note {
+      position: absolute;
+      left: 24px;
+      bottom: 20px;
+      right: 24px;
+      font-size: 15px;
+      color: rgba(203,213,225,0.76);
+      text-align: center;
+      z-index: 0;
+    }
+
+    .pill-row { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 20px; }
+    .pill { padding: 10px 14px; border-radius: 999px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.14); color: #cbd5e1; font-size: 16px; font-weight: 800; }
+
+    .image-placeholder {
+      position: relative;
+      min-height: 360px;
+      border-radius: 32px;
+      overflow: hidden;
+      background: linear-gradient(140deg, rgba(30,41,59,0.92), rgba(15,23,42,0.72));
+      border: 1px solid rgba(255,255,255,0.14);
+    }
+
+    .fake-road { position:absolute; left:-10%; right:-10%; bottom:-25%; height:55%; background:rgba(148,163,184,0.16); transform:skewY(-6deg); }
+    .fake-sky { position:absolute; inset:0 0 52% 0; background:linear-gradient(180deg,rgba(96,165,250,.22),transparent); }
+    .car { position:absolute; width:160px; height:80px; border-radius:28px 36px 18px 18px; background:rgba(96,165,250,.42); border:2px solid rgba(147,197,253,.9); }
+    .person { position:absolute; width:54px; height:118px; border-radius:26px 26px 16px 16px; background:rgba(52,211,153,.38); border:2px solid rgba(110,231,183,.95); }
+    .instance-label { position:absolute; padding:5px 9px; border-radius:999px; background:rgba(2,6,23,.8); border:1px solid rgba(255,255,255,.18); font-size:13px; font-weight:900; color: white; }
+
+    .roi-slide-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+      gap: clamp(16px, 1.7vw, 24px);
+      align-items: center;
+    }
+
+    .animation-panel {
+      min-height: 372px;
+      border-radius: 32px;
+      border: 1px solid rgba(255,255,255,0.14);
+      background: linear-gradient(160deg, rgba(2,6,23,0.78), rgba(30,41,59,0.64));
+      padding: 18px;
+      overflow: hidden;
+      display: grid;
+      align-content: center;
+      gap: 10px;
+    }
+
+    .animation-panel svg {
+      width: 100%;
+      height: auto;
+      max-height: 318px;
+      display: block;
+      overflow: hidden;
+    }
+
+    .diagram-caption {
+      font-size: clamp(13px, 1.1vw, 16px);
+      color: rgba(203,213,225,0.78);
+      text-align: center;
+      line-height: 1.35;
+    }
+
+    .feature-grid line,
+    .feature-grid path {
+      stroke: rgba(148,163,184,0.34);
+      stroke-width: 1;
+    }
+
+    .feature-cell {
+      fill: rgba(96,165,250,0.08);
+      stroke: rgba(148,163,184,0.28);
+      stroke-width: 1;
+    }
+
+    .roi-box {
+      fill: rgba(96,165,250,0.13);
+      stroke: #60a5fa;
+      stroke-width: 4;
+      rx: 10;
+      vector-effect: non-scaling-stroke;
+    }
+
+    .roi-rounded-box {
+      fill: rgba(251,113,133,0.12);
+      stroke: #fb7185;
+      stroke-width: 4;
+      rx: 10;
+      vector-effect: non-scaling-stroke;
+    }
+
+    .roi-floating-box {
+      fill: none;
+      stroke: #34d399;
+      stroke-width: 4;
+      stroke-dasharray: 10 8;
+      rx: 10;
+      vector-effect: non-scaling-stroke;
+    }
+
+    .bin-line {
+      stroke: rgba(248,250,252,0.78);
+      stroke-width: 2;
+      vector-effect: non-scaling-stroke;
+    }
+
+    .output-cell {
+      fill: rgba(52,211,153,0.16);
+      stroke: rgba(110,231,183,0.8);
+      stroke-width: 1.5;
+      rx: 5;
+    }
+
+    .sampling-point {
+      fill: #facc15;
+      stroke: rgba(2,6,23,0.82);
+      stroke-width: 2;
+      transform-box: fill-box;
+      transform-origin: center;
+    }
+
+    .interp-cell {
+      fill: rgba(167,139,250,0.18);
+      stroke: rgba(196,181,253,0.72);
+      stroke-width: 1;
+    }
+
+    .svg-label {
+      fill: #e2e8f0;
+      font-size: 17px;
+      font-weight: 800;
+    }
+
+    .svg-small {
+      fill: #a7b0c7;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .takeaway {
+      margin-top: 18px;
+      border-left: 4px solid var(--accent3);
+    }
+
+    .arch {
+      display: grid;
+      gap: 14px;
+      margin-top: 10px;
+    }
+
+    .arch-row {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      align-items: stretch;
+      counter-reset: arch-step;
+    }
+
+    .arch-row.four,
+    .arch-row.five,
+    .arch-row.six {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .grid.two .arch-row.four {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .arch-node {
+      min-height: 104px;
+      border-radius: 22px;
+      padding: 16px 14px 16px 48px;
+      background: rgba(255,255,255,0.09);
+      border: 1px solid rgba(255,255,255,0.18);
+      display: grid;
+      align-content: center;
+      text-align: left;
+      position: relative;
+      min-width: 0;
+    }
+
+    .arch-node::before {
+      counter-increment: arch-step;
+      content: counter(arch-step);
+      position: absolute;
+      left: 14px;
+      top: 16px;
+      width: 28px;
+      height: 28px;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      color: white;
+      font-weight: 900;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+    }
+
+    .arch-title {
+      font-size: clamp(16px, 1.45vw, 21px);
+      font-weight: 900;
+      color: white;
+      line-height: 1.08;
+    }
+
+    .dim {
+      display: block;
+      margin-top: 8px;
+      font-size: clamp(12px, 1vw, 15px);
+      line-height: 1.28;
+      color: #bfdbfe;
+      font-weight: 800;
+      overflow-wrap: anywhere;
+    }
+
+    .arch-note {
+      font-size: clamp(15px, 1.28vw, 18px);
+      color: var(--muted);
+      line-height: 1.36;
+    }
+
+    .branch-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .proposal-demo {
+      display: grid;
+      gap: 16px;
+    }
+
+    .proposal-demo img {
+      width: 100%;
+      max-height: 470px;
+      object-fit: contain;
+      display: block;
+      border-radius: 26px;
+      border: 1px solid rgba(255,255,255,0.16);
+      box-shadow: 0 18px 48px rgba(0,0,0,0.24);
+    }
+
+    .proposal-demo-note {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .pool-bin-lines {
+      opacity: 0;
+      animation: fadeInSoft 4.8s ease-in-out infinite;
+    }
+
+    .pool-output-cell {
+      opacity: 0.34;
+      animation: cellPulse 4.8s ease-in-out infinite;
+    }
+
+    .pool-output-cell:nth-of-type(2n) { animation-delay: 0.12s; }
+    .pool-output-cell:nth-of-type(3n) { animation-delay: 0.24s; }
+
+    .rounded-shift {
+      animation: shiftGlow 4.8s ease-in-out infinite;
+    }
+
+    .sampling-point {
+      animation: samplePulse 4.2s ease-in-out infinite;
+    }
+
+    .sampling-point:nth-of-type(2n) { animation-delay: 0.18s; }
+    .sampling-point:nth-of-type(3n) { animation-delay: 0.32s; }
+
+    .interp-highlight {
+      animation: interpGlow 4.2s ease-in-out infinite;
+    }
+
+    @keyframes fadeInSoft {
+      0%, 18% { opacity: 0; }
+      38%, 82% { opacity: 1; }
+      100% { opacity: 0; }
+    }
+
+    @keyframes cellPulse {
+      0%, 25% { opacity: 0.18; transform: translateY(0); }
+      48%, 78% { opacity: 1; transform: translateY(-2px); }
+      100% { opacity: 0.18; transform: translateY(0); }
+    }
+
+    @keyframes shiftGlow {
+      0%, 100% { opacity: 0.48; }
+      45%, 72% { opacity: 1; }
+    }
+
+    @keyframes samplePulse {
+      0%, 22% { opacity: 0.2; transform: scale(0.72); }
+      45%, 80% { opacity: 1; transform: scale(1); }
+      100% { opacity: 0.2; transform: scale(0.72); }
+    }
+
+    @keyframes interpGlow {
+      0%, 28%, 100% { opacity: 0.28; }
+      52%, 78% { opacity: 1; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .pool-bin-lines,
+      .pool-output-cell,
+      .rounded-shift,
+      .sampling-point,
+      .interp-highlight {
+        animation: none !important;
+        opacity: 1;
+        transform: none;
+      }
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border-radius: 24px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.14);
+    }
+
+    th, td {
+      padding: 16px 18px;
+      text-align: left;
+      border-bottom: 1px solid rgba(255,255,255,0.11);
+      font-size: clamp(15px, 1.38vw, 20px);
+      color: #cbd5e1;
+      vertical-align: top;
+    }
+
+    th { color: white; font-size: clamp(13px, 1.2vw, 17px); text-transform: uppercase; letter-spacing: 0.08em; background: rgba(255,255,255,0.08); }
+    tr:last-child td { border-bottom: 0; }
+    .good { color: #86efac; font-weight: 900; }
+    .warn { color: #fde68a; font-weight: 900; }
+    .bad { color: #fda4af; font-weight: 900; }
+
+    .footer {
+      position: absolute;
+      left: clamp(42px, 5.2vw, 74px);
+      right: clamp(42px, 5.2vw, 74px);
+      bottom: 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 18px;
+      color: rgba(203,213,225,0.72);
+      font-size: 15px;
+      z-index: 5;
+    }
+
+    .progress {
+      position: fixed;
+      left: 0;
+      bottom: 0;
+      height: 5px;
+      background: linear-gradient(90deg, var(--accent), var(--accent2), var(--accent3));
+      width: 0%;
+      z-index: 10;
+      transition: width 0.2s ease;
+    }
+
+    .controls {
+      position: fixed;
+      right: 24px;
+      bottom: 18px;
+      display: flex;
+      gap: 10px;
+      z-index: 20;
+    }
+
+    button {
+      border: 1px solid rgba(255,255,255,0.2);
+      background: rgba(255,255,255,0.1);
+      color: white;
+      border-radius: 14px;
+      padding: 10px 14px;
+      font-size: 16px;
+      cursor: pointer;
+      backdrop-filter: blur(12px);
+    }
+
+    button:hover { background: rgba(255,255,255,0.18); }
+
+    @media (max-width: 900px) {
+      body { overflow: auto; }
+      .deck { height: auto; min-height: 100vh; padding: 16px 0 72px; }
+      .slide { width: 96vw; aspect-ratio: auto; min-height: 720px; max-height: none; }
+      .grid.two, .grid.three, .grid.four, .pipeline, .arch-row, .arch-row.four, .arch-row.five, .arch-row.six, .grid.two .arch-row.four, .branch-grid, .proposal-demo-note { grid-template-columns: 1fr; }
+      .diagram-canvas { min-height: 480px; }
+      .flow-row, .flow-row.wide, .compact-flow-main { grid-template-columns: 1fr; }
+      .compact-flow-bottom, .compact-flow-bottom.single { grid-template-columns: 1fr; }
+      .roi-slide-grid { grid-template-columns: 1fr; }
+      .animation-panel { min-height: 300px; }
+      .animation-panel svg { max-height: 260px; }
+      .flow-arrow { transform: rotate(90deg); }
+      .hero-shape { opacity: 0.32; }
+      .footer { position: static; margin-top: 28px; }
+    }
+
+    @media print {
+      body { overflow: visible; background: #0b1020; }
+      .deck { display: block; height: auto; }
+      .slide { display: block !important; page-break-after: always; width: 100vw; height: 56.25vw; max-height: none; border-radius: 0; border: 0; box-shadow: none; }
+      .controls, .progress { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="deck">
+    <section class="slide active">
+      <div class="kicker">Computer Vision Series</div>
+      <h1>From Fast R-CNN<br><span class="highlight">to Mask R-CNN</span></h1>
+      <p class="subtitle">How deep learning models evolved from drawing boxes around objects to producing pixel-level object masks.</p>
+      <div class="hero-shape">
+        <div class="dot" style="left:10%;top:13%"></div>
+        <div class="dot" style="right:14%;top:20%"></div>
+        <div class="box" style="left:14%;top:25%;width:35%;height:45%"></div>
+        <div class="mask" style="left:57%;top:22%;width:26%;height:52%"></div>
+        <div class="box" style="left:54%;top:19%;width:33%;height:61%;border-color:#34d399;background:rgba(52,211,153,.08)"></div>
+      </div>
+      <div class="footer"><span>Goal: beginner-friendly intuition + interview-level keywords</span><span>1 / 22</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Big Picture</div>
+      <h2>The R-CNN Family Solves One Core Problem</h2>
+      <p class="quote">Given an image, the model needs to answer: <span class="highlight">what objects exist</span>, <span class="highlight">where they are</span>, and eventually <span class="highlight">what exact pixels belong to each object</span>.</p>
+      <div class="grid three" style="margin-top:34px">
+        <div class="card"><div class="tag">Classification</div><h3>What?</h3><p>“There is a dog.”</p></div>
+        <div class="card"><div class="tag">Detection</div><h3>Where?</h3><p>“The dog is inside this box.”</p></div>
+        <div class="card"><div class="tag">Instance Segmentation</div><h3>Which pixels?</h3><p>“These exact pixels are dog #1.”</p></div>
+      </div>
+      <div class="footer"><span>Frame the story as an evolution of output detail.</span><span>2 / 22</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Evolution Timeline</div>
+      <h2>One Lineage, More Shared Computation</h2>
+      <div class="pipeline">
+        <div class="stage"><div class="stage-title">R-CNN</div><div class="stage-desc">Run CNN on each proposal separately</div></div>
+        <div class="stage"><div class="stage-title">Fast R-CNN</div><div class="stage-desc">Run CNN once, classify regions on the feature map</div></div>
+        <div class="stage"><div class="stage-title">Faster R-CNN</div><div class="stage-desc">Learn proposal generation with RPN</div></div>
+        <div class="stage"><div class="stage-title">Mask R-CNN</div><div class="stage-desc">Add a mask branch for each detected object</div></div>
+      </div>
+      <div class="card timeline-note"><p><strong>Main intuition:</strong> each version removes one bottleneck: shared features, learned proposals, then pixel masks.</p></div>
+      <div class="footer"><span>Use this slide as the map for the rest of the talk.</span><span>3 / 22</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">External Proposal</div>
+      <h2>Selective Search: The Hand-Designed Proposal Step</h2>
+      <div class="grid two">
+        <div>
+          <p><strong>Selective Search</strong> is the common external proposal method used before Faster R-CNN.</p>
+          <ul>
+            <li>Starts from many small image regions, often called superpixels</li>
+            <li>Merges neighboring regions using color, texture, size, and shape compatibility</li>
+            <li>Outputs many class-agnostic boxes: “an object might be here”</li>
+          </ul>
+          <div class="card" style="margin-top:20px"><p><strong>Important:</strong> it does not know dog, car, or person. It only proposes candidate locations.</p></div>
+        </div>
+        <div class="arch">
+          <div class="arch-row four">
+            <div class="arch-node"><div class="arch-title">Image</div><span class="dim">H x W x 3</span></div>
+            <div class="arch-node"><div class="arch-title">Superpixels</div><span class="dim">many tiny regions</span></div>
+            <div class="arch-node"><div class="arch-title">Region Merge</div><span class="dim">color + texture + size</span></div>
+            <div class="arch-node"><div class="arch-title">Proposals</div><span class="dim">~2000 boxes<br>[N, 4]</span></div>
+          </div>
+          <p class="arch-note">These proposals are “external” because they are computed outside the neural network, before CNN classification.</p>
+        </div>
+      </div>
+      <div class="footer"><span>Key phrase: “Selective Search gives class-agnostic candidate boxes.”</span><span>4 / 22</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">R-CNN Proposals</div>
+      <h2>From Superpixels to Candidate Object Boxes</h2>
+      <div class="proposal-demo">
+        <img src="assets/dog-superpixel-proposals.png" alt="Dog image transformed into superpixels and Selective Search style proposal boxes" />
+      </div>
+      <div class="footer"><span>Dog photo: Wikimedia Commons. Generated with SLIC superpixels + proposal-style grouping.</span><span>5 / 22</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Selective Search Steps</div>
+      <h2>How Selective Search Finds RoIs</h2>
+      <div class="arch">
+        <div class="arch-row six">
+          <div class="arch-node"><div class="arch-title">Start Small</div><span class="dim">split image into superpixels</span></div>
+          <div class="arch-node"><div class="arch-title">Build Neighbors</div><span class="dim">connect touching regions</span></div>
+          <div class="arch-node"><div class="arch-title">Compare Similarity</div><span class="dim">color, texture, size, fill</span></div>
+          <div class="arch-node"><div class="arch-title">Merge Regions</div><span class="dim">combine most similar neighbors</span></div>
+          <div class="arch-node"><div class="arch-title">Make Boxes</div><span class="dim">draw bounding box around each merged region</span></div>
+          <div class="arch-node"><div class="arch-title">Send RoIs</div><span class="dim">R-CNN classifies each candidate box</span></div>
+        </div>
+        <div class="grid two">
+          <div class="card"><p><strong>Important:</strong> these boxes are class-agnostic. Selective Search says “maybe object here,” not “this is a dog.”</p></div>
+          <div class="card"><p><strong>Why many boxes?</strong> The algorithm keeps proposals from many merge levels so small parts, whole objects, and groups can all become RoIs.</p></div>
+        </div>
+      </div>
+      <div class="footer"><span>Key phrase: “superpixels → similar region merges → many candidate RoI boxes.”</span><span>6 / 22</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Baseline</div>
+      <h2>R-CNN: Accurate, but Painfully Slow</h2>
+      <div class="grid two">
+        <div>
+          <p>R-CNN starts with external region proposals, then sends each cropped proposal through a CNN.</p>
+          <ul>
+            <li>Selective Search gives about <strong>2000 proposal boxes</strong></li>
+            <li>Good: brings deep learning into object detection</li>
+            <li>Problem: thousands of CNN forward passes per image</li>
+            <li>Training pipeline is multi-stage and heavy</li>
+          </ul>
+        </div>
+        <div class="diagram-canvas">
+          <div class="flow-row">
+            <div class="flow-box">Image</div>
+            <div class="flow-arrow">→</div>
+            <div class="proposal-stack">
+              <div class="flow-box">Proposal 1<span>CNN</span></div>
+              <div class="flow-box">Proposal 2<span>CNN</span></div>
+              <div class="flow-box">Proposal N<span>CNN</span></div>
+            </div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-box">Class + Box</div>
+          </div>
+          <div class="flow-note">Slow because the CNN work is repeated for many cropped regions.</div>
+        </div>
+      </div>
+      <div class="footer"><span>Key phrase: “CNN per region proposal.”</span><span>7 / 22</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Architecture</div>
+      <h2>R-CNN Architecture with Typical Dimensions</h2>
+      <div class="arch">
+        <div class="arch-row six">
+          <div class="arch-node"><div class="arch-title">Input Image</div><span class="dim">example<br>800 x 600 x 3</span></div>
+          <div class="arch-node"><div class="arch-title">Selective Search</div><span class="dim">N ≈ 2000 boxes<br>[N, 4]</span></div>
+          <div class="arch-node"><div class="arch-title">Crop + Warp</div><span class="dim">each proposal<br>224 x 224 x 3</span></div>
+          <div class="arch-node"><div class="arch-title">CNN</div><span class="dim">per crop<br>4096-d feature</span></div>
+          <div class="arch-node"><div class="arch-title">Classifier</div><span class="dim">scores<br>[N, K + 1]</span></div>
+          <div class="arch-node"><div class="arch-title">Box Regressor</div><span class="dim">offsets<br>[N, 4K]</span></div>
+        </div>
+        <div class="grid two">
+          <div class="card"><p><strong>Bottleneck:</strong> the CNN runs separately for every proposal crop, so the same image content is recomputed many times.</p></div>
+          <div class="card"><p><strong>Training shape:</strong> older R-CNN used a multi-stage pipeline: CNN features, class-specific SVMs, then bounding-box regression.</p></div>
+        </div>
+      </div>
+      <div class="footer"><span>Dimension idea: N proposals means N separate CNN forward passes.</span><span>8 / 22</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Fast R-CNN</div>
+      <h2>Fast R-CNN: Share the CNN Work</h2>
+      <div class="grid two">
+        <div class="diagram-canvas">
+          <div class="compact-flow">
+            <div class="compact-flow-main">
+              <div class="flow-box">Image</div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-box">CNN Feature Map<span>run once</span></div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-box">RoI Pooling<span>region features</span></div>
+            </div>
+            <div class="down-arrow">↓</div>
+            <div class="compact-flow-bottom">
+              <div class="flow-box">Class Score</div>
+              <div class="flow-box">Box Refine</div>
+            </div>
+          </div>
+          <div class="flow-note">The expensive CNN backbone is shared across all proposals.</div>
+        </div>
+        <div>
+          <p>Instead of applying CNN repeatedly, Fast R-CNN computes one shared feature map for the whole image.</p>
+          <ul>
+            <li>Selective Search still provides external RoIs</li>
+            <li><strong>RoI Pooling</strong> extracts fixed-size features for each proposal</li>
+            <li>One network predicts class scores and box offsets</li>
+            <li>Much faster than R-CNN, but proposals are still external</li>
+          </ul>
+        </div>
+      </div>
+      <div class="footer"><span>Key phrase: “CNN once per image.”</span><span>9 / 22</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Architecture</div>
+      <h2>Fast R-CNN Architecture with Typical Dimensions</h2>
+      <div class="arch">
+        <div class="arch-row six">
+          <div class="arch-node"><div class="arch-title">Input Image</div><span class="dim">800 x 600 x 3</span></div>
+          <div class="arch-node"><div class="arch-title">Backbone CNN</div><span class="dim">stride 16<br>50 x 38 x C</span></div>
+          <div class="arch-node"><div class="arch-title">External RoIs</div><span class="dim">Selective Search<br>[N, 4]</span></div>
+          <div class="arch-node"><div class="arch-title">RoI Pooling</div><span class="dim">fixed grid<br>N x 7 x 7 x C</span></div>
+          <div class="arch-node"><div class="arch-title">FC Layers</div><span class="dim">per RoI<br>N x 4096</span></div>
+          <div class="arch-node"><div class="arch-title">Heads</div><span class="dim">class [N,K+1]<br>box [N,4K]</span></div>
+        </div>
+        <div class="card"><p><strong>What changed from R-CNN?</strong> The image is passed through the CNN once. RoIs select regions from the shared feature map instead of cropping the raw image and rerunning CNN.</p></div>
+      </div>
+      <div class="footer"><span>Dimension idea: feature sharing changes N CNN passes into 1 CNN pass.</span><span>10 / 22</span></div>
+    </section>
+
+    <!-- ROI POOLING / ROI ALIGN SLIDES START -->
+    <section class="slide">
+      <div class="kicker">RoI Pooling</div>
+      <h2>RoI Pooling: From Variable Regions to Fixed Features</h2>
+      <div class="roi-slide-grid">
+        <div>
+          <p>Object proposals can have different widths and heights, but the classifier head expects a consistent input shape.</p>
+          <ul>
+            <li>Each proposal marks a region on the shared feature map.</li>
+            <li>RoI Pooling divides that region into bins.</li>
+            <li>Each bin becomes one cell in a fixed grid, often <strong>7x7</strong>.</li>
+          </ul>
+          <div class="card takeaway"><p><strong>Takeaway:</strong> RoI Pooling makes every proposal compatible with the same classifier head.</p></div>
+        </div>
+        <div class="animation-panel">
+          <svg viewBox="0 0 760 420" role="img" aria-label="RoI Pooling converts a variable RoI into a fixed 7 by 7 output grid">
+            <defs>
+              <pattern id="roiPoolGrid" class="feature-grid" width="36" height="36" patternUnits="userSpaceOnUse">
+                <path d="M 36 0 L 0 0 0 36" fill="none" />
+              </pattern>
+            </defs>
+            <text x="46" y="36" class="svg-label">Feature Map</text>
+            <rect x="46" y="58" width="324" height="260" rx="18" fill="url(#roiPoolGrid)" stroke="rgba(255,255,255,0.18)" />
+            <rect class="roi-box" x="118" y="112" width="190" height="142" />
+            <text x="138" y="102" class="svg-small">RoI</text>
+            <g class="pool-bin-lines">
+              <line class="bin-line" x1="156" y1="112" x2="156" y2="254" />
+              <line class="bin-line" x1="194" y1="112" x2="194" y2="254" />
+              <line class="bin-line" x1="232" y1="112" x2="232" y2="254" />
+              <line class="bin-line" x1="270" y1="112" x2="270" y2="254" />
+              <line class="bin-line" x1="118" y1="140" x2="308" y2="140" />
+              <line class="bin-line" x1="118" y1="169" x2="308" y2="169" />
+              <line class="bin-line" x1="118" y1="197" x2="308" y2="197" />
+              <line class="bin-line" x1="118" y1="226" x2="308" y2="226" />
+            </g>
+            <text x="166" y="286" class="svg-small">divide into bins</text>
+            <text x="424" y="36" class="svg-label">Fixed-size Output</text>
+            <text x="488" y="60" class="svg-small">7x7 feature grid</text>
+            <g transform="translate(442 82)">
+              <rect width="238" height="238" rx="18" fill="rgba(15,23,42,0.88)" stroke="rgba(255,255,255,0.16)" />
+              <g>
+                <rect class="output-cell pool-output-cell" x="18" y="18" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="48" y="18" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="78" y="18" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="108" y="18" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="138" y="18" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="168" y="18" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="198" y="18" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="18" y="48" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="48" y="48" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="78" y="48" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="108" y="48" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="138" y="48" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="168" y="48" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="198" y="48" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="18" y="78" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="48" y="78" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="78" y="78" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="108" y="78" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="138" y="78" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="168" y="78" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="198" y="78" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="18" y="108" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="48" y="108" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="78" y="108" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="108" y="108" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="138" y="108" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="168" y="108" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="198" y="108" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="18" y="138" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="48" y="138" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="78" y="138" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="108" y="138" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="138" y="138" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="168" y="138" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="198" y="138" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="18" y="168" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="48" y="168" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="78" y="168" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="108" y="168" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="138" y="168" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="168" y="168" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="198" y="168" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="18" y="198" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="48" y="198" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="78" y="198" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="108" y="198" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="138" y="198" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="168" y="198" width="24" height="24" />
+                <rect class="output-cell pool-output-cell" x="198" y="198" width="24" height="24" />
+              </g>
+            </g>
+          </svg>
+          <p class="diagram-caption">Variable-size RoIs are divided into bins; each bin contributes one output feature cell.</p>
+        </div>
+      </div>
+      <div class="footer"><span>Key phrase: “variable region in, fixed feature grid out.”</span><span>11 / 22</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Quantization</div>
+      <h2>The Problem: Quantization Error</h2>
+      <div class="roi-slide-grid">
+        <div>
+          <p>RoI Pooling rounds floating-point RoI coordinates into integer feature-map cells.</p>
+          <ul>
+            <li>The original boundary may land between grid cells.</li>
+            <li>Rounding moves the region boundary slightly.</li>
+            <li>That offset is usually okay for boxes, but masks need precise alignment.</li>
+          </ul>
+          <div class="card takeaway"><p><strong>Takeaway:</strong> Rounding is small, but it hurts pixel-level mask quality.</p></div>
+        </div>
+        <div class="animation-panel">
+          <svg viewBox="0 0 760 420" role="img" aria-label="Floating RoI boundary compared with rounded RoI boundary">
+            <defs>
+              <pattern id="quantGrid" class="feature-grid" width="44" height="44" patternUnits="userSpaceOnUse">
+                <path d="M 44 0 L 0 0 0 44" fill="none" />
+              </pattern>
+            </defs>
+            <text x="74" y="42" class="svg-label">Feature Map Grid</text>
+            <rect x="74" y="70" width="440" height="286" rx="18" fill="url(#quantGrid)" stroke="rgba(255,255,255,0.18)" />
+            <rect class="roi-floating-box" x="167" y="126" width="214" height="152" />
+            <rect class="roi-rounded-box rounded-shift" x="162" y="114" width="220" height="176" />
+            <path d="M381 126 L382 114 M167 278 L162 290" stroke="#facc15" stroke-width="4" stroke-linecap="round" />
+            <circle cx="381" cy="126" r="7" fill="#facc15" />
+            <circle cx="382" cy="114" r="7" fill="#facc15" />
+            <text x="402" y="123" class="svg-small">small offset</text>
+            <g transform="translate(552 106)">
+              <rect x="0" y="0" width="150" height="56" rx="14" fill="rgba(52,211,153,0.12)" stroke="rgba(52,211,153,0.72)" />
+              <line x1="18" y1="28" x2="44" y2="28" stroke="#34d399" stroke-width="4" stroke-dasharray="8 6" />
+              <text x="56" y="33" class="svg-small">Floating RoI</text>
+              <rect x="0" y="78" width="150" height="56" rx="14" fill="rgba(251,113,133,0.12)" stroke="rgba(251,113,133,0.72)" />
+              <line x1="18" y1="106" x2="44" y2="106" stroke="#fb7185" stroke-width="4" />
+              <text x="56" y="111" class="svg-small">Rounded RoI</text>
+            </g>
+          </svg>
+          <p class="diagram-caption">The solid rounded box no longer perfectly matches the dashed floating-point RoI.</p>
+        </div>
+      </div>
+      <div class="footer"><span>Key phrase: “rounding creates small spatial misalignment.”</span><span>12 / 22</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">RoI Align</div>
+      <h2>RoI Align: Keep the Geometry Precise</h2>
+      <div class="roi-slide-grid">
+        <div>
+          <p><strong>RoI Align</strong> avoids coordinate rounding. It keeps the RoI boundary in floating-point geometry.</p>
+          <ul>
+            <li>Each bin uses sampling points inside the floating RoI.</li>
+            <li>Feature values are estimated with bilinear interpolation.</li>
+            <li>The output grid stays aligned with the original object geometry.</li>
+          </ul>
+          <div class="card takeaway"><p><strong>Takeaway:</strong> RoI Align is one reason instance masks become cleaner.</p></div>
+        </div>
+        <div class="animation-panel">
+          <svg viewBox="0 0 760 420" role="img" aria-label="RoI Align samples inside bins and interpolates nearby feature cells">
+            <defs>
+              <pattern id="alignGrid" class="feature-grid" width="42" height="42" patternUnits="userSpaceOnUse">
+                <path d="M 42 0 L 0 0 0 42" fill="none" />
+              </pattern>
+            </defs>
+            <text x="52" y="38" class="svg-label">Feature Map</text>
+            <rect x="52" y="64" width="390" height="286" rx="18" fill="url(#alignGrid)" stroke="rgba(255,255,255,0.18)" />
+            <rect class="roi-floating-box" x="128" y="112" width="246" height="166" />
+            <g class="pool-bin-lines">
+              <line class="bin-line" x1="210" y1="112" x2="210" y2="278" />
+              <line class="bin-line" x1="292" y1="112" x2="292" y2="278" />
+              <line class="bin-line" x1="128" y1="167" x2="374" y2="167" />
+              <line class="bin-line" x1="128" y1="223" x2="374" y2="223" />
+            </g>
+            <rect class="interp-cell interp-highlight" x="210" y="167" width="42" height="42" />
+            <rect class="interp-cell interp-highlight" x="252" y="167" width="42" height="42" />
+            <rect class="interp-cell interp-highlight" x="210" y="209" width="42" height="42" />
+            <rect class="interp-cell interp-highlight" x="252" y="209" width="42" height="42" />
+            <circle class="sampling-point" cx="235" cy="192" r="7" />
+            <circle class="sampling-point" cx="279" cy="190" r="7" />
+            <circle class="sampling-point" cx="238" cy="237" r="7" />
+            <circle class="sampling-point" cx="281" cy="235" r="7" />
+            <text x="148" y="102" class="svg-small">floating-point RoI</text>
+            <text x="204" y="306" class="svg-small">Sampling Points</text>
+            <g transform="translate(500 92)">
+              <text x="0" y="-18" class="svg-label">Aligned Output</text>
+              <rect width="170" height="170" rx="18" fill="rgba(15,23,42,0.88)" stroke="rgba(255,255,255,0.16)" />
+              <rect class="output-cell" x="18" y="18" width="36" height="36" />
+              <rect class="output-cell" x="66" y="18" width="36" height="36" />
+              <rect class="output-cell" x="114" y="18" width="36" height="36" />
+              <rect class="output-cell" x="18" y="66" width="36" height="36" />
+              <rect class="output-cell interp-highlight" x="66" y="66" width="36" height="36" />
+              <rect class="output-cell" x="114" y="66" width="36" height="36" />
+              <rect class="output-cell" x="18" y="114" width="36" height="36" />
+              <rect class="output-cell" x="66" y="114" width="36" height="36" />
+              <rect class="output-cell" x="114" y="114" width="36" height="36" />
+              <text x="12" y="202" class="svg-small">bilinear interpolation</text>
+            </g>
+          </svg>
+          <p class="diagram-caption">Sampling points estimate values from nearby feature cells without snapping the RoI to integers.</p>
+        </div>
+      </div>
+      <div class="footer"><span>Key phrase: “keep coordinates continuous, then sample carefully.”</span><span>13 / 22</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Comparison</div>
+      <h2>RoI Pooling vs RoI Align</h2>
+      <table>
+        <thead><tr><th>Method</th><th>Coordinates</th><th>Feature Extraction</th><th>Best Fit</th><th>Mask Quality</th></tr></thead>
+        <tbody>
+          <tr><td><strong>RoI Pooling</strong></td><td>Rounds coordinates</td><td>Uses max pooling in bins</td><td>Good for detection</td><td class="warn">Can misalign masks</td></tr>
+          <tr><td><strong>RoI Align</strong></td><td>Keeps floating-point coordinates</td><td>Uses bilinear interpolation</td><td>Better for segmentation masks</td><td class="good">Used by<br>Mask&nbsp;R&#8209;CNN</td></tr>
+        </tbody>
+      </table>
+      <div class="grid two" style="margin-top:28px">
+        <div class="card"><p><strong>RoI Pooling:</strong> faster to explain, strong enough for object boxes, but it snaps geometry to the grid.</p></div>
+        <div class="card"><p><strong>RoI Align:</strong> preserves spatial detail, which matters when the model must predict exact object pixels.</p></div>
+      </div>
+      <div class="footer"><span>Key phrase: “detection tolerates rough alignment; masks need precise alignment.”</span><span>14 / 22</span></div>
+    </section>
+    <!-- ROI POOLING / ROI ALIGN SLIDES END -->
+
+    <section class="slide">
+      <div class="kicker">Faster R-CNN</div>
+      <h2>Faster R-CNN: Let the Network Propose Regions</h2>
+      <div class="grid two">
+        <div>
+          <p>Faster R-CNN removes the external proposal bottleneck by adding a <strong>Region Proposal Network</strong>.</p>
+          <ul>
+            <li>RPN scans the feature map and proposes likely object boxes</li>
+            <li>Detection head classifies and refines those boxes</li>
+            <li>This makes detection closer to end-to-end learning</li>
+          </ul>
+          <div class="pill-row"><span class="pill">Backbone</span><span class="pill">RPN</span><span class="pill">RoI Pooling</span><span class="pill">Detection Head</span></div>
+        </div>
+        <div class="diagram-canvas">
+          <div class="compact-flow">
+            <div class="compact-flow-main">
+              <div class="flow-box">Image</div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-box">Backbone<span>feature map</span></div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-box">RPN<span>object proposals</span></div>
+            </div>
+            <div class="down-arrow">↓</div>
+            <div class="compact-flow-bottom single">
+              <div class="flow-box">Class + Box</div>
+            </div>
+          </div>
+          <div class="card" style="margin-top:20px; padding:16px; text-align:center"><p style="font-size:17px"><strong>What changed?</strong> The proposal generator becomes part of the neural network.</p></div>
+        </div>
+      </div>
+      <div class="footer"><span>Key phrase: “RPN replaces external region proposal.”</span><span>15 / 22</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Architecture</div>
+      <h2>Faster R-CNN Architecture with Typical Dimensions</h2>
+      <div class="arch">
+        <div class="arch-row six">
+          <div class="arch-node"><div class="arch-title">Input</div><span class="dim">800 x 600 x 3</span></div>
+          <div class="arch-node"><div class="arch-title">Backbone</div><span class="dim">H' x W' x C<br>50 x 38 x C</span></div>
+          <div class="arch-node"><div class="arch-title">RPN 3 x 3</div><span class="dim">sliding conv<br>H' x W' x 512</span></div>
+          <div class="arch-node"><div class="arch-title">Anchor Heads</div><span class="dim">A=9<br>obj: H'W'A x 2<br>box: H'W'A x 4</span></div>
+          <div class="arch-node"><div class="arch-title">RoIs after NMS</div><span class="dim">top N boxes<br>[N, 4]</span></div>
+          <div class="arch-node"><div class="arch-title">Detection Head</div><span class="dim">class [N,K+1]<br>box [N,4K]</span></div>
+        </div>
+        <div class="card"><p><strong>What changed from Fast R-CNN?</strong> The external Selective Search block is replaced by a learned RPN that shares the same backbone feature map.</p></div>
+      </div>
+      <div class="footer"><span>Dimension idea: every feature-map cell evaluates A anchor boxes.</span><span>16 / 22</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Mask R-CNN</div>
+      <h2>Mask R-CNN: Detection + Pixel Mask</h2>
+      <div class="grid two">
+        <div class="image-placeholder">
+          <div class="fake-sky"></div><div class="fake-road"></div>
+          <div class="car" style="left:12%;bottom:26%"><span class="instance-label" style="left:18px;top:-30px">car #1</span></div>
+          <div class="car" style="right:14%;bottom:38%;background:rgba(167,139,250,.38);border-color:rgba(196,181,253,.95)"><span class="instance-label" style="left:28px;top:-30px">car #2</span></div>
+          <div class="person" style="left:56%;bottom:32%"><span class="instance-label" style="left:-8px;top:-34px">person #1</span></div>
+          <div class="box" style="left:11%;bottom:24%;width:27%;height:27%"></div>
+          <div class="box" style="right:13%;bottom:36%;width:27%;height:27%;border-color:#a78bfa;background:rgba(167,139,250,.08)"></div>
+          <div class="box" style="left:55%;bottom:30%;width:12%;height:39%;border-color:#34d399;background:rgba(52,211,153,.08)"></div>
+        </div>
+        <div>
+          <p>Mask R-CNN extends Faster R-CNN with one extra output branch.</p>
+          <ul>
+            <li><strong>Class branch:</strong> what object is it?</li>
+            <li><strong>Box branch:</strong> where is it?</li>
+            <li><strong>Mask branch:</strong> which pixels belong to this instance?</li>
+          </ul>
+          <div class="card" style="margin-top:20px"><p><strong>Simple sentence:</strong> Faster R-CNN finds objects; Mask R-CNN also colors each object’s shape.</p></div>
+        </div>
+      </div>
+      <div class="footer"><span>Use this to bridge detection and instance segmentation.</span><span>17 / 22</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Architecture</div>
+      <h2>Mask R-CNN Architecture with Typical Dimensions</h2>
+      <div class="arch">
+        <div class="arch-row five">
+          <div class="arch-node"><div class="arch-title">Backbone + RPN</div><span class="dim">shared feature map<br>RoIs [N,4]</span></div>
+          <div class="arch-node"><div class="arch-title">RoIAlign</div><span class="dim">box path<br>N x 7 x 7 x C</span></div>
+          <div class="arch-node"><div class="arch-title">Box Head</div><span class="dim">class [N,K+1]<br>box [N,4K]</span></div>
+          <div class="arch-node"><div class="arch-title">Mask Head</div><span class="dim">FCN path<br>N x 14 x 14 x C</span></div>
+          <div class="arch-node"><div class="arch-title">Instance Masks</div><span class="dim">upsampled<br>N x K x 28 x 28</span></div>
+        </div>
+        <div class="branch-grid">
+          <div class="card"><p><strong>Class branch:</strong> predicts which category each RoI belongs to.</p></div>
+          <div class="card"><p><strong>Box branch:</strong> refines the object bounding box.</p></div>
+          <div class="card"><p><strong>Mask branch:</strong> predicts a small binary mask for each class, then keeps the mask for the predicted class.</p></div>
+        </div>
+      </div>
+      <div class="footer"><span>Dimension idea: box prediction is vector output; mask prediction is spatial output.</span><span>18 / 22</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Important Detail</div>
+      <h2>RoI Pooling vs RoIAlign</h2>
+      <div class="grid two">
+        <div class="card">
+          <div class="tag">Fast / Faster R-CNN</div>
+          <h3>RoI Pooling</h3>
+          <p>Quantizes region coordinates to fit a fixed grid. This is okay for boxes, but can slightly misalign pixels.</p>
+          <p class="bad" style="margin-top:16px">Problem: small localization errors hurt masks.</p>
+        </div>
+        <div class="card">
+          <div class="tag">Mask R-CNN</div>
+          <h3>RoIAlign</h3>
+          <p>Avoids harsh coordinate rounding and samples features more carefully.</p>
+          <p class="good" style="margin-top:16px">Benefit: better pixel-level alignment for masks.</p>
+        </div>
+      </div>
+      <div class="card" style="margin-top:30px"><p><strong>Beginner-friendly explanation:</strong> box detection tolerates a little blur, but mask prediction needs clean boundaries. RoIAlign keeps spatial details more precise.</p></div>
+      <div class="footer"><span>Key phrase: “RoIAlign improves mask quality by preserving alignment.”</span><span>19 / 22</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Comparison</div>
+      <h2>What Changed Across the Series?</h2>
+      <table>
+        <thead><tr><th>Model</th><th>Region Proposal</th><th>CNN Computation</th><th>Output</th><th>Main Bottleneck Solved</th></tr></thead>
+        <tbody>
+          <tr><td><strong>R-CNN</strong></td><td>External: Selective Search</td><td>Per proposal crop</td><td>Class + Box</td><td class="bad">Very slow inference</td></tr>
+          <tr><td><strong>Fast R-CNN</strong></td><td>External: Selective Search</td><td>Shared once</td><td>Class + Box</td><td class="warn">Repeated CNN removed</td></tr>
+          <tr><td><strong>Faster R-CNN</strong></td><td>Learned by RPN</td><td>Shared once</td><td>Class + Box</td><td class="good">External proposals removed</td></tr>
+          <tr><td><strong>Mask R-CNN</strong></td><td>Learned by RPN</td><td>Shared once</td><td>Class + Box + Mask</td><td class="good">Instance-level pixel masks</td></tr>
+        </tbody>
+      </table>
+      <div class="footer"><span>This table is useful as your recap slide.</span><span>20 / 22</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Beginner Summary</div>
+      <h2>A Simple Story for Beginners</h2>
+      <div class="grid three">
+        <div class="card"><div class="big-number">1</div><h3>First, find candidates</h3><p>The model asks: “Where might objects be?”</p></div>
+        <div class="card"><div class="big-number">2</div><h3>Then, classify and refine</h3><p>For each candidate, predict class and adjust the box.</p></div>
+        <div class="card"><div class="big-number">3</div><h3>Finally, draw the mask</h3><p>For instance segmentation, paint the pixels of each object.</p></div>
+      </div>
+      <div class="card" style="margin-top:30px"><p><strong>Best one-liner:</strong> The R-CNN series gradually moved from “crop many regions and classify them” to “share image features, learn proposals, and predict masks.”</p></div>
+      <div class="footer"><span>Use this slide if the audience gets lost.</span><span>21 / 22</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Summary</div>
+      <h2>Takeaways</h2>
+      <div class="grid two">
+        <div>
+          <ul>
+            <li><strong>Fast R-CNN</strong> makes detection faster by sharing CNN features.</li>
+            <li><strong>Selective Search</strong> is the external proposal algorithm in R-CNN and Fast R-CNN.</li>
+            <li><strong>Faster R-CNN</strong> learns region proposals with RPN.</li>
+            <li><strong>Mask R-CNN</strong> adds a mask branch for instance segmentation.</li>
+            <li><strong>RoIAlign</strong> matters because masks need precise spatial alignment.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <p class="quote" style="font-size:clamp(28px,2.55vw,34px)">Detection answers <span class="highlight">“where is it?”</span><br><br>Mask R-CNN answers <span class="highlight">“which exact pixels are it?”</span></p>
+        </div>
+      </div>
+      <div class="footer"><span>End with boxes → masks.</span><span>22 / 22</span></div>
+    </section>
+  </div>
+
+  <div class="controls">
+    <button id="prev">← Prev</button>
+    <button id="next">Next →</button>
+  </div>
+  <div class="progress" id="progress"></div>
+
+  <script>
+    const slides = Array.from(document.querySelectorAll('.slide'));
+    const progress = document.getElementById('progress');
+    const params = new URLSearchParams(window.location.search);
+    const requestedSlide = Number(params.get('slide'));
+    let index = Number.isFinite(requestedSlide) && requestedSlide > 0 ? requestedSlide - 1 : 0;
+
+    function show(i) {
+      index = Math.max(0, Math.min(slides.length - 1, i));
+      slides.forEach((s, idx) => s.classList.toggle('active', idx === index));
+      progress.style.width = `${((index + 1) / slides.length) * 100}%`;
+      document.title = `Slide ${index + 1}/${slides.length} · From Fast R-CNN to Mask R-CNN`;
+    }
+
+    document.getElementById('prev').addEventListener('click', () => show(index - 1));
+    document.getElementById('next').addEventListener('click', () => show(index + 1));
+    document.addEventListener('keydown', (e) => {
+      if (['ArrowRight', ' ', 'PageDown'].includes(e.key)) show(index + 1);
+      if (['ArrowLeft', 'PageUp'].includes(e.key)) show(index - 1);
+      if (e.key === 'Home') show(0);
+      if (e.key === 'End') show(slides.length - 1);
+    });
+
+    show(index);
+  </script>
+</body>
+</html>
