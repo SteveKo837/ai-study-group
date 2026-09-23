@@ -1,0 +1,1279 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Detailed R-CNN Family: R-CNN to Mask R-CNN</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --ink: #f8fafc;
+      --muted: #a7b0c7;
+      --accent: #60a5fa;
+      --accent2: #a78bfa;
+      --accent3: #34d399;
+      --danger: #fb7185;
+      --warning: #facc15;
+      --card: rgba(255,255,255,0.08);
+      --line: rgba(255,255,255,0.18);
+      --shadow: 0 24px 70px rgba(0,0,0,0.35);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; }
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at 20% 10%, rgba(96,165,250,0.25), transparent 25%),
+        radial-gradient(circle at 80% 20%, rgba(167,139,250,0.25), transparent 28%),
+        linear-gradient(135deg, #070a13, var(--bg));
+      color: var(--ink);
+      overflow: hidden;
+    }
+
+    .deck { width: 100vw; height: 100vh; display: grid; place-items: center; }
+    .slide {
+      width: min(96vw, 1440px);
+      aspect-ratio: 16 / 9;
+      max-height: 96vh;
+      padding: clamp(30px, 3.8vw, 54px) clamp(36px, 4.8vw, 68px);
+      display: none;
+      position: relative;
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 32px;
+      background: linear-gradient(145deg, rgba(15,23,42,0.96), rgba(15,23,42,0.76));
+      box-shadow: var(--shadow);
+    }
+    .slide.active { display: block; }
+    .slide::after {
+      content: "";
+      position: absolute;
+      inset: auto -15% -55% auto;
+      width: 520px;
+      height: 520px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(96,165,250,0.18), transparent 70%);
+      pointer-events: none;
+    }
+
+    h1, h2, h3, p { margin: 0; }
+    h1 { font-size: clamp(45px, 5vw, 72px); line-height: 0.98; letter-spacing: -0.045em; }
+    h2 { font-size: clamp(30px, 3.1vw, 46px); line-height: 1.04; letter-spacing: -0.035em; margin-bottom: clamp(14px, 1.4vw, 20px); }
+    h3 { font-size: clamp(18px, 1.55vw, 24px); letter-spacing: -0.015em; margin-bottom: 8px; }
+    p, li { font-size: clamp(15px, 1.28vw, 20px); line-height: 1.36; color: var(--muted); }
+    ul { padding-left: 22px; margin: 10px 0 0; }
+    li { margin: 6px 0; }
+    strong { color: var(--ink); }
+
+    .subtitle { font-size: clamp(20px, 2vw, 29px); margin-top: 22px; max-width: 900px; color: #cbd5e1; }
+    .small { font-size: 14px; color: var(--muted); line-height: 1.3; }
+    .highlight { color: #93c5fd; }
+    .kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      font-size: clamp(12px, 1vw, 15px);
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      color: #bfdbfe;
+      margin-bottom: clamp(10px, 1.2vw, 16px);
+    }
+    .kicker::before {
+      content: "";
+      width: 11px;
+      height: 11px;
+      border-radius: 999px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      box-shadow: 0 0 24px rgba(96,165,250,0.8);
+    }
+
+    .grid { display: grid; gap: clamp(12px, 1.35vw, 20px); }
+    .grid.two { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; }
+    .grid.two.wide-left { grid-template-columns: minmax(0, 1.18fr) minmax(0, .82fr); }
+    .grid.two.wide-right { grid-template-columns: minmax(0, .84fr) minmax(0, 1.16fr); }
+    .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .grid.six { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      padding: clamp(14px, 1.45vw, 22px);
+      backdrop-filter: blur(20px);
+      min-width: 0;
+    }
+    .card.compact { padding: 12px 14px; }
+    .tag {
+      display: inline-flex;
+      padding: 7px 11px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 800;
+      background: rgba(96,165,250,0.14);
+      color: #bfdbfe;
+      border: 1px solid rgba(96,165,250,0.26);
+      margin-bottom: 10px;
+      white-space: nowrap;
+    }
+    .quote {
+      font-size: clamp(26px, 2.55vw, 37px);
+      line-height: 1.24;
+      letter-spacing: -0.03em;
+      color: white;
+      max-width: 980px;
+    }
+    .note-box {
+      margin-top: 14px;
+      border-color: rgba(52,211,153,0.34);
+      background: rgba(52,211,153,0.09);
+    }
+    .note-box .tag {
+      color: #bbf7d0;
+      background: rgba(52,211,153,0.14);
+      border-color: rgba(52,211,153,0.28);
+    }
+    .formula {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      padding: 16px;
+      border-radius: 18px;
+      border: 1px solid rgba(250,204,21,0.35);
+      background: rgba(250,204,21,0.1);
+      color: #fef3c7;
+      font-weight: 900;
+      font-size: clamp(19px, 1.65vw, 25px);
+      text-align: center;
+    }
+
+    .footer {
+      position: absolute;
+      left: clamp(36px, 4.8vw, 68px);
+      right: clamp(36px, 4.8vw, 68px);
+      bottom: clamp(18px, 2vw, 28px);
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      color: rgba(203,213,225,0.82);
+      font-size: 13px;
+      z-index: 10;
+    }
+    .footer span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .controls {
+      position: fixed;
+      right: 22px;
+      bottom: 18px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      z-index: 30;
+      color: #cbd5e1;
+      font-size: 14px;
+    }
+    button {
+      appearance: none;
+      border: 1px solid rgba(255,255,255,0.18);
+      background: rgba(15,23,42,0.86);
+      color: white;
+      border-radius: 999px;
+      padding: 10px 14px;
+      cursor: pointer;
+      font-weight: 800;
+    }
+    .progress {
+      position: fixed;
+      left: 0;
+      top: 0;
+      height: 4px;
+      width: 100%;
+      background: rgba(255,255,255,0.09);
+      z-index: 40;
+    }
+    .bar {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--accent), var(--accent2), var(--accent3));
+      transition: width .25s ease;
+    }
+
+    .hero-shape {
+      position: absolute;
+      right: clamp(44px, 5.4vw, 76px);
+      bottom: clamp(54px, 5vw, 70px);
+      width: clamp(330px, 31vw, 430px);
+      height: clamp(240px, 23vw, 310px);
+      border-radius: 36px;
+      border: 1px solid rgba(255,255,255,0.16);
+      background: linear-gradient(135deg, rgba(96,165,250,0.2), rgba(167,139,250,0.18));
+      box-shadow: inset 0 0 90px rgba(255,255,255,0.06);
+      transform: rotate(-3deg);
+    }
+    .box {
+      position: absolute;
+      border: 4px solid #60a5fa;
+      border-radius: 18px;
+      background: rgba(96,165,250,0.08);
+    }
+    .mask {
+      position: absolute;
+      border-radius: 50% 42% 48% 45%;
+      background: rgba(52,211,153,0.42);
+      border: 3px solid rgba(52,211,153,0.95);
+    }
+    .dot {
+      position: absolute;
+      width: 34px;
+      height: 34px;
+      border-radius: 999px;
+      background: rgba(248,250,252,0.18);
+      border: 1px solid rgba(255,255,255,0.18);
+    }
+
+    .pipeline {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 16px;
+      margin-top: 20px;
+      counter-reset: timeline-step;
+    }
+    .stage {
+      position: relative;
+      min-height: 126px;
+      border-radius: 22px;
+      padding: 18px 16px 16px;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.18);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      min-width: 0;
+    }
+    .stage::before {
+      counter-increment: timeline-step;
+      content: counter(timeline-step);
+      width: 30px;
+      height: 30px;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      font-size: 15px;
+      font-weight: 900;
+      margin-bottom: 10px;
+      background: rgba(96,165,250,0.18);
+      color: #dbeafe;
+      border: 1px solid rgba(96,165,250,0.32);
+    }
+    .stage-title { font-size: clamp(19px, 1.7vw, 26px); font-weight: 900; letter-spacing: -0.02em; }
+    .stage-desc { color: var(--muted); margin-top: 8px; font-size: clamp(14px, 1.1vw, 18px); line-height: 1.28; }
+
+    .paper-figure {
+      background: rgba(255,255,255,0.98);
+      border-radius: 18px;
+      border: 1px solid rgba(255,255,255,0.25);
+      padding: 12px;
+      display: grid;
+      place-items: center;
+      min-height: 260px;
+      overflow: hidden;
+    }
+    .paper-figure img {
+      max-width: 100%;
+      max-height: 390px;
+      object-fit: contain;
+      display: block;
+    }
+    .paper-figure.tall img { max-height: 355px; }
+    .dog-frame {
+      position: relative;
+      border-radius: 20px;
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,0.18);
+      background: rgba(255,255,255,0.06);
+      min-height: 340px;
+    }
+    .dog-frame img {
+      width: 100%;
+      height: 100%;
+      min-height: 340px;
+      object-fit: cover;
+      display: block;
+      opacity: .94;
+    }
+    .dog-frame.contain img { object-fit: contain; background: #111827; }
+    .dog-label {
+      position: absolute;
+      left: 14px;
+      top: 14px;
+      padding: 7px 10px;
+      border-radius: 999px;
+      color: white;
+      font-size: 13px;
+      font-weight: 900;
+      background: rgba(15,23,42,.72);
+      border: 1px solid rgba(255,255,255,.2);
+      backdrop-filter: blur(8px);
+    }
+    .overlay-box {
+      position: absolute;
+      border: 3px solid #60a5fa;
+      border-radius: 10px;
+      background: rgba(96,165,250,.08);
+      box-shadow: 0 0 0 1px rgba(15,23,42,.5);
+    }
+    .proposal-a { left: 14%; top: 27%; width: 28%; height: 45%; }
+    .proposal-b { left: 34%; top: 21%; width: 28%; height: 47%; border-color: #34d399; background: rgba(52,211,153,.08); }
+    .proposal-c { left: 58%; top: 20%; width: 31%; height: 52%; border-color: #facc15; background: rgba(250,204,21,.08); }
+    .proposal-wide { left: 11%; top: 18%; width: 78%; height: 58%; border-color: #fb7185; background: rgba(251,113,133,.07); }
+    .feature-overlay {
+      position: absolute;
+      inset: 0;
+      background-image: linear-gradient(rgba(255,255,255,.2) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.2) 1px, transparent 1px);
+      background-size: 10% 12.5%;
+      opacity: .65;
+      pointer-events: none;
+    }
+
+    .arch {
+      display: grid;
+      gap: 14px;
+      align-content: center;
+    }
+    .arch-row {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 10px;
+      align-items: stretch;
+    }
+    .arch-node {
+      min-height: 92px;
+      border-radius: 18px;
+      border: 1px solid rgba(255,255,255,0.18);
+      background: rgba(255,255,255,0.08);
+      padding: 13px 10px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      text-align: center;
+      min-width: 0;
+    }
+    .arch-title { font-weight: 900; font-size: clamp(14px, 1.18vw, 18px); color: white; line-height: 1.15; }
+    .dim { margin-top: 7px; color: var(--muted); font-size: clamp(11px, .95vw, 14px); line-height: 1.2; }
+    .arrow-text { text-align: center; color: #bfdbfe; font-weight: 900; margin: -2px 0; }
+
+    .diagram-panel, .animation-panel {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.16);
+      border-radius: 22px;
+      padding: 14px;
+      overflow: hidden;
+      min-height: 330px;
+    }
+    .diagram-panel svg, .animation-panel svg { width: 100%; max-height: 440px; display: block; }
+    .diagram-caption { font-size: 13px; text-align: center; margin-top: 8px; color: #cbd5e1; }
+    .svg-label { fill: #e2e8f0; font-size: 20px; font-weight: 900; }
+    .svg-small { fill: #cbd5e1; font-size: 15px; font-weight: 800; }
+    .svg-dim { fill: #94a3b8; font-size: 13px; font-weight: 700; }
+    .feature-grid line, .grid-line { stroke: rgba(255,255,255,.22); stroke-width: 1; }
+    .roi-box { fill: rgba(96,165,250,.08); stroke: #60a5fa; stroke-width: 4; rx: 8; }
+    .roi-rounded-box { fill: rgba(251,113,133,.08); stroke: #fb7185; stroke-width: 4; rx: 8; }
+    .sampling-point { fill: #facc15; stroke: #0f172a; stroke-width: 2; }
+    .number-cell { fill: rgba(15,23,42,.88); stroke: rgba(255,255,255,.2); stroke-width: 1.5; }
+    .hot-cell { fill: rgba(52,211,153,.22); stroke: #34d399; stroke-width: 3; }
+    .warn-cell { fill: rgba(251,113,133,.16); stroke: #fb7185; stroke-width: 3; }
+
+    .ss-step-1 { animation: ssFade 8s infinite both; animation-delay: 0s; }
+    .ss-step-2 { animation: ssFade 8s infinite both; animation-delay: 1.6s; }
+    .ss-step-3 { animation: ssFade 8s infinite both; animation-delay: 3.2s; }
+    .ss-step-4 { animation: ssFade 8s infinite both; animation-delay: 4.8s; }
+    .ss-step-5 { animation: ssFade 8s infinite both; animation-delay: 6.4s; }
+    @keyframes ssFade { 0%,16%{opacity:0} 22%,72%{opacity:1} 88%,100%{opacity:0} }
+
+    .bin-line { stroke: #facc15; stroke-width: 3; opacity: 0; animation: drawIn 4.8s ease-in-out infinite; }
+    .pool-choice { animation: cellPulse 4.8s ease-in-out infinite; }
+    .pool-out { animation: outPulse 4.8s ease-in-out infinite; }
+    @keyframes drawIn { 0%,20%{opacity:0} 36%,92%{opacity:1} 100%{opacity:0} }
+    @keyframes cellPulse { 0%,42%{opacity:.25} 52%,82%{opacity:1} 100%{opacity:.25} }
+    @keyframes outPulse { 0%,62%{opacity:.25} 76%,92%{opacity:1} 100%{opacity:.25} }
+
+    .float-roi { stroke-dasharray: 9 8; animation: gentleDash 5s linear infinite; }
+    @keyframes gentleDash { to { stroke-dashoffset: -34; } }
+    .sample-appear { opacity: 0; animation: sampleAppear 5.5s ease-in-out infinite; }
+    .neighbor-flash { animation: neighborFlash 5.5s ease-in-out infinite; }
+    .interpolate-line { stroke: #facc15; stroke-width: 2; opacity: 0; animation: sampleAppear 5.5s ease-in-out infinite; animation-delay: .5s; }
+    @keyframes sampleAppear { 0%,26%{opacity:0} 38%,86%{opacity:1} 100%{opacity:0} }
+    @keyframes neighborFlash { 0%,40%{opacity:.18} 52%,82%{opacity:1} 100%{opacity:.18} }
+
+    .anchor-thin { fill: none; stroke-width: 2.5; opacity: .78; }
+    .anchor-focus { animation: anchorFocus 7s ease-in-out infinite; transform-origin: center; }
+    .regressed { opacity: 0; animation: proposalAppear 7s ease-in-out infinite; }
+    .nms-kill { animation: nmsFade 7s ease-in-out infinite; }
+    @keyframes anchorFocus { 0%,35%{opacity:.25} 48%,100%{opacity:1} }
+    @keyframes proposalAppear { 0%,52%{opacity:0} 66%,100%{opacity:1} }
+    @keyframes nmsFade { 0%,65%{opacity:1} 80%,100%{opacity:.18} }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border-radius: 20px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.16);
+    }
+    th, td {
+      padding: 12px 13px;
+      border-bottom: 1px solid rgba(255,255,255,0.12);
+      text-align: left;
+      color: #cbd5e1;
+      font-size: clamp(13px, 1.05vw, 16px);
+      line-height: 1.28;
+      vertical-align: top;
+    }
+    th { color: white; font-weight: 900; background: rgba(96,165,250,0.12); }
+    tr:last-child td { border-bottom: 0; }
+    .good { color: #86efac; font-weight: 800; }
+    .warn { color: #fde68a; font-weight: 800; }
+    .bad { color: #fda4af; font-weight: 800; }
+
+    .mini-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .score-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin: 4px 6px 4px 0;
+      padding: 7px 10px;
+      border-radius: 999px;
+      background: rgba(255,255,255,.08);
+      border: 1px solid rgba(255,255,255,.16);
+      color: #e2e8f0;
+      font-size: 13px;
+      font-weight: 800;
+    }
+    .mask-demo {
+      position: absolute;
+      left: 34%;
+      top: 24%;
+      width: 26%;
+      height: 43%;
+      border-radius: 44% 48% 42% 46%;
+      background: rgba(52,211,153,.46);
+      border: 3px solid rgba(52,211,153,.95);
+      mix-blend-mode: screen;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: .001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .001ms !important;
+      }
+    }
+
+    @media (max-width: 860px) {
+      body { overflow: auto; }
+      .deck { height: auto; min-height: 100vh; padding: 12px; }
+      .slide {
+        width: 100%;
+        aspect-ratio: auto;
+        min-height: 100vh;
+        max-height: none;
+        overflow: visible;
+        border-radius: 20px;
+      }
+      .grid.two, .grid.two.wide-left, .grid.two.wide-right, .grid.three, .grid.four, .grid.six, .pipeline, .arch-row, .mini-grid {
+        grid-template-columns: 1fr;
+      }
+      .footer { position: static; margin-top: 24px; }
+      .paper-figure img { max-height: 300px; }
+      .dog-frame, .dog-frame img { min-height: 280px; }
+      .controls { position: sticky; justify-content: center; right: auto; bottom: 8px; margin: 8px; }
+    }
+
+    @media print {
+      body { overflow: visible; background: #0b1020; }
+      .deck { display: block; height: auto; }
+      .slide { display: block !important; page-break-after: always; width: 100vw; height: 56.25vw; max-height: none; border-radius: 0; border: 0; box-shadow: none; }
+      .controls, .progress { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="progress"><div class="bar" id="bar"></div></div>
+  <div class="deck">
+    <section class="slide active">
+      <div class="kicker">Computer Vision Series</div>
+      <h1>R-CNN Family<br><span class="highlight">Mechanics Deep Dive</span></h1>
+      <p class="subtitle">From hand-designed region proposals to shared feature maps, learned anchors, RoIAlign, and instance masks.</p>
+      <div class="hero-shape">
+        <div class="dot" style="left:10%;top:13%"></div>
+        <div class="dot" style="right:14%;top:20%"></div>
+        <div class="box" style="left:14%;top:25%;width:35%;height:45%"></div>
+        <div class="mask" style="left:57%;top:22%;width:26%;height:52%"></div>
+        <div class="box" style="left:54%;top:19%;width:33%;height:61%;border-color:#34d399;background:rgba(52,211,153,.08)"></div>
+      </div>
+      <div class="footer"><span>Dog photo used consistently: Wikimedia Commons, “Three Dogs (40408317263).jpg”.</span><span></span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Big Picture</div>
+      <h2>The R-CNN Family Keeps Removing Bottlenecks</h2>
+      <div class="pipeline">
+        <div class="stage"><div class="stage-title">R-CNN</div><div class="stage-desc">External proposals, crop each proposal, CNN per crop.</div></div>
+        <div class="stage"><div class="stage-title">Fast R-CNN</div><div class="stage-desc">CNN once per image, RoI Pooling on shared feature map.</div></div>
+        <div class="stage"><div class="stage-title">Faster R-CNN</div><div class="stage-desc">RPN learns proposals with anchors on the feature map.</div></div>
+        <div class="stage"><div class="stage-title">Mask R-CNN</div><div class="stage-desc">RoIAlign plus a mask branch for per-instance pixels.</div></div>
+      </div>
+      <div class="card note-box"><p>Each model keeps more work inside the network and shares more computation. The story is: proposals become faster, features become shared, and masks need better alignment.</p></div>
+      <div class="footer"><span>Use this slide as the map for the detailed mechanics.</span><span></span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Shared Example Image</div>
+      <h2>We Will Use the Same Dog Image Everywhere</h2>
+      <div class="grid two wide-left">
+        <div class="dog-frame">
+          <img src="assets/dog-source.jpg" alt="Three dogs used as the consistent example image throughout the deck" />
+          <div class="dog-label">Input image</div>
+          <div class="overlay-box proposal-a"></div>
+          <div class="overlay-box proposal-b"></div>
+          <div class="overlay-box proposal-c"></div>
+        </div>
+        <div>
+          <p>Using one image makes the pipeline easier to follow.</p>
+          <ul>
+            <li><strong>Selective Search:</strong> superpixels and hand-designed proposal boxes</li>
+            <li><strong>Fast R-CNN:</strong> map image proposals to CNN feature-map regions</li>
+            <li><strong>Faster R-CNN:</strong> anchor boxes around dog-like regions</li>
+            <li><strong>Mask R-CNN:</strong> turn boxes into instance masks</li>
+          </ul>
+          <div class="card note-box"><p>The image stays the same; what changes is how each model proposes, extracts, and predicts from regions.</p></div>
+        </div>
+      </div>
+      <div class="footer"><span>Attribution: Wikimedia Commons, “Three Dogs (40408317263).jpg”.</span><span></span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Original Paper Figure</div>
+      <h2>R-CNN: Original Architecture Figure</h2>
+      <div class="grid two wide-right">
+        <div>
+          <div class="tag">What changed?</div>
+          <p>R-CNN brought CNN features into object detection by classifying region proposals instead of sliding a classifier over the whole image.</p>
+          <ul>
+            <li><strong>Solved:</strong> stronger features than hand-designed detection pipelines</li>
+            <li><strong>Bottleneck:</strong> about 2000 CNN forward passes per image</li>
+            <li><strong>Still problematic:</strong> external proposals, crop/warp distortion, multi-stage training</li>
+          </ul>
+        </div>
+        <div class="paper-figure">
+          <img src="assets/paper-figures/rcnn-fig-1.png" alt="Original R-CNN paper architecture figure showing proposals, CNN features, and classification" />
+        </div>
+      </div>
+      <div class="footer"><span>Source: Girshick et al., “Rich feature hierarchies for accurate object detection and semantic segmentation,” arXiv:1311.2524, Fig. 1.</span><span></span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">R-CNN Mechanics</div>
+      <h2>R-CNN Runs the CNN Separately for Each Proposal</h2>
+      <div class="arch">
+        <div class="arch-row">
+          <div class="arch-node"><div class="arch-title">Dog Image</div><span class="dim">H x W x 3</span></div>
+          <div class="arch-node"><div class="arch-title">Selective Search</div><span class="dim">~2000 boxes<br>[N, 4]</span></div>
+          <div class="arch-node"><div class="arch-title">Crop + Warp</div><span class="dim">each proposal<br>227 x 227 x 3</span></div>
+          <div class="arch-node"><div class="arch-title">CNN</div><span class="dim">run N times<br>4096-d feature</span></div>
+          <div class="arch-node"><div class="arch-title">Classifier</div><span class="dim">class scores<br>[N, K + 1]</span></div>
+          <div class="arch-node"><div class="arch-title">Box Regressor</div><span class="dim">refine boxes<br>[N, 4K]</span></div>
+        </div>
+      </div>
+      <div class="grid two" style="margin-top:18px">
+        <div class="card"><p><strong>Key cost:</strong> if N = 2000, the CNN repeats similar convolution work around the same dogs thousands of times.</p></div>
+        <div class="card note-box"><p>R-CNN asks, “Is this crop a dog?” again and again. It is accurate, but it forgets that many crops overlap.</p></div>
+      </div>
+      <div class="footer"><span>Interview keyword: external proposal method + per-proposal CNN.</span><span></span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Selective Search</div>
+      <h2>External Proposal Means “Outside the Neural Network”</h2>
+      <div class="grid two">
+        <div class="dog-frame contain">
+          <img src="assets/dog-superpixel-proposals.png" alt="Dog image, superpixel regions, and proposal-style bounding boxes" />
+        </div>
+        <div>
+          <p><strong>Selective Search</strong> gives R-CNN and Fast R-CNN many candidate RoIs before the CNN makes class predictions.</p>
+          <ul>
+            <li>It is <strong>class-agnostic</strong>: it proposes “object-like region,” not “dog.”</li>
+            <li>It keeps boxes from many merge levels.</li>
+            <li>It usually returns many proposals so recall is high.</li>
+          </ul>
+          <div class="formula">RoI = candidate box that might contain an object</div>
+        </div>
+      </div>
+      <div class="footer"><span>Dog proposal visualization generated locally from SLIC superpixels plus proposal-style grouping.</span><span></span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Selective Search Details</div>
+      <h2>How Region Merging Actually Works</h2>
+      <div class="grid two">
+        <div class="arch">
+          <div class="arch-row" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+            <div class="arch-node"><div class="arch-title">1. Superpixels</div><span class="dim">small coherent regions</span></div>
+            <div class="arch-node"><div class="arch-title">2. Adjacency Graph</div><span class="dim">neighbor regions connected</span></div>
+            <div class="arch-node"><div class="arch-title">3. Similarity</div><span class="dim">score every neighbor pair</span></div>
+            <div class="arch-node"><div class="arch-title">4. Greedy Merge</div><span class="dim">merge highest score pair</span></div>
+            <div class="arch-node"><div class="arch-title">5. Update</div><span class="dim">features + neighbors</span></div>
+            <div class="arch-node"><div class="arch-title">6. Store Boxes</div><span class="dim">many merge levels</span></div>
+          </div>
+        </div>
+        <div>
+          <div class="formula">similarity = color + texture + size + fill</div>
+          <div class="mini-grid" style="margin-top:14px">
+            <div class="card compact"><p><strong>Color:</strong> do regions have similar color histograms?</p></div>
+            <div class="card compact"><p><strong>Texture:</strong> do local patterns look similar?</p></div>
+            <div class="card compact"><p><strong>Size:</strong> prefer merging small regions early.</p></div>
+            <div class="card compact"><p><strong>Fill:</strong> does the combined box tightly fit both regions?</p></div>
+          </div>
+          <p class="small" style="margin-top:12px">Different color spaces and merge strategies are used to increase proposal diversity.</p>
+        </div>
+      </div>
+      <div class="footer"><span>Selective Search is greedy hierarchical grouping, not a learned detector.</span><span></span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Animated Example</div>
+      <h2>Selective Search Merge Sequence on the Dog Image</h2>
+      <div class="grid two wide-left">
+        <div class="dog-frame">
+          <img src="assets/dog-source.jpg" alt="Dog image with animated neighboring regions and proposal boxes" />
+          <div class="feature-overlay" style="background-size:8% 10%; opacity:.32"></div>
+          <div class="overlay-box ss-step-1" style="left:33%;top:27%;width:9%;height:13%;border-color:#facc15"></div>
+          <div class="overlay-box ss-step-1" style="left:41%;top:27%;width:10%;height:14%;border-color:#a78bfa"></div>
+          <div class="overlay-box ss-step-2" style="left:33%;top:27%;width:18%;height:14%;border-color:#34d399"></div>
+          <div class="overlay-box ss-step-3" style="left:31%;top:25%;width:24%;height:25%;border-color:#34d399"></div>
+          <div class="overlay-box ss-step-4" style="left:29%;top:22%;width:29%;height:43%;border-color:#60a5fa"></div>
+          <div class="overlay-box ss-step-5" style="left:28%;top:20%;width:33%;height:48%;border-color:#fb7185"></div>
+          <div class="dog-label">neighbor regions → merged region → proposal box</div>
+        </div>
+        <div>
+          <ol style="padding-left:22px;margin:0">
+            <li><strong>Neighbor regions</strong> are connected in the adjacency graph.</li>
+            <li>The <strong>highest similarity pair</strong> is merged first.</li>
+            <li>Region features are recomputed for the <strong>merged region</strong>.</li>
+            <li>A bounding rectangle is stored as a <strong>proposal box</strong>.</li>
+            <li>The process repeats, producing small, medium, and large RoIs.</li>
+          </ol>
+          <div class="card note-box"><p>Selective Search saves boxes throughout the merge tree, so it can propose dog parts, one dog, or a group of dogs.</p></div>
+        </div>
+      </div>
+      <div class="footer"><span>Animation loops through 2-3 merge levels: neighbors, merged region, proposal box.</span><span></span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Original Paper Figure</div>
+      <h2>Fast R-CNN: Original Architecture Figure</h2>
+      <div class="grid two wide-right">
+        <div>
+          <div class="tag">What changed?</div>
+          <p>Fast R-CNN computes convolutional features once for the entire image, then extracts proposal features from the shared feature map.</p>
+          <ul>
+            <li><strong>Solved:</strong> repeated CNN work from R-CNN</li>
+            <li><strong>Still uses:</strong> external Selective Search proposals</li>
+            <li><strong>Still problematic:</strong> RoI Pooling quantizes coordinates; proposals are not learned</li>
+          </ul>
+        </div>
+        <div class="paper-figure">
+          <img src="assets/paper-figures/fast-rcnn-fig-1.png" alt="Original Fast R-CNN paper architecture figure showing RoI projection, RoI pooling, and heads" />
+        </div>
+      </div>
+      <div class="footer"><span>Source: Girshick, “Fast R-CNN,” arXiv:1504.08083, Fig. 1.</span><span></span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Fast R-CNN Mechanics</div>
+      <h2>RoI Pooling Happens on the CNN Feature Map</h2>
+      <div class="grid two wide-left">
+        <div class="dog-frame">
+          <img src="assets/dog-source.jpg" alt="Dog image with proposal box and feature map grid overlay" />
+          <div class="feature-overlay"></div>
+          <div class="overlay-box proposal-b"></div>
+          <div class="dog-label">Image RoI: (80,48,240,208)</div>
+        </div>
+        <div>
+          <p>The proposal begins in original image coordinates. After the backbone CNN, coordinates are scaled down by the feature stride.</p>
+          <div class="card" style="margin-top:14px">
+            <p><strong>Example:</strong></p>
+            <p>image RoI = <strong>(80, 48, 240, 208)</strong></p>
+            <p>stride = <strong>16</strong></p>
+            <p>feature-map RoI = <strong>(5, 3, 15, 13)</strong></p>
+          </div>
+          <div class="card note-box"><p>The CNN feature map is a compressed version of the image. RoI Pooling chooses the matching rectangle on that compressed map.</p></div>
+        </div>
+      </div>
+      <div class="footer"><span>Coordinate rule: divide image coordinates by backbone stride, then pool on feature-map cells.</span><span></span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">RoI Pooling</div>
+      <h2>Variable RoI In, Fixed Tensor Out</h2>
+      <div class="grid two">
+        <div>
+          <p>Every proposal can have a different shape, but the fully connected detection head needs a fixed-size tensor.</p>
+          <ul>
+            <li>Map proposal to the shared feature map.</li>
+            <li>Divide the feature-map RoI into fixed bins.</li>
+            <li>Max-pool inside each bin.</li>
+            <li>Output shape is usually <strong>7 x 7 x C</strong>.</li>
+          </ul>
+          <div class="card note-box"><p>RoI Pooling asks: inside this region, what is the strongest activation in each bin?</p></div>
+        </div>
+        <div class="animation-panel">
+          <svg viewBox="0 0 720 390" role="img" aria-label="RoI Pooling divides a feature-map region into bins and outputs a fixed grid">
+            <text x="32" y="32" class="svg-label">Feature Map</text>
+            <g transform="translate(38 58)">
+              <rect width="310" height="248" rx="16" fill="rgba(15,23,42,.82)" stroke="rgba(255,255,255,.18)" />
+              <g class="feature-grid">
+                <path d="M0 31H310M0 62H310M0 93H310M0 124H310M0 155H310M0 186H310M0 217H310M38 0V248M76 0V248M114 0V248M152 0V248M190 0V248M228 0V248M266 0V248" stroke="rgba(255,255,255,.18)" />
+              </g>
+              <rect class="roi-box" x="78" y="54" width="190" height="142" />
+              <line class="bin-line" x1="173" y1="54" x2="173" y2="196" />
+              <line class="bin-line" x1="78" y1="125" x2="268" y2="125" />
+              <text x="96" y="214" class="svg-small">teaching: 2x2 bins</text>
+            </g>
+            <text x="424" y="32" class="svg-label">Fixed Output</text>
+            <g transform="translate(440 80)">
+              <rect width="210" height="210" rx="18" fill="rgba(15,23,42,.88)" stroke="rgba(255,255,255,.18)" />
+              <rect class="pool-out" x="26" y="26" width="70" height="70" rx="10" fill="rgba(96,165,250,.25)" stroke="#60a5fa" />
+              <rect class="pool-out" x="114" y="26" width="70" height="70" rx="10" fill="rgba(96,165,250,.25)" stroke="#60a5fa" />
+              <rect class="pool-out" x="26" y="114" width="70" height="70" rx="10" fill="rgba(96,165,250,.25)" stroke="#60a5fa" />
+              <rect class="pool-out" x="114" y="114" width="70" height="70" rx="10" fill="rgba(96,165,250,.25)" stroke="#60a5fa" />
+              <text x="52" y="69" class="svg-small">max</text><text x="140" y="69" class="svg-small">max</text><text x="52" y="157" class="svg-small">max</text><text x="140" y="157" class="svg-small">max</text>
+            </g>
+            <path d="M365 178 C390 178 400 178 420 178" stroke="#bfdbfe" stroke-width="4" fill="none" marker-end="url(#arrow)" />
+            <defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#bfdbfe"/></marker></defs>
+          </svg>
+          <p class="diagram-caption">Real Fast R-CNN commonly uses 7x7 bins; 2x2 is shown for teaching.</p>
+        </div>
+      </div>
+      <div class="footer"><span>Output for N proposals: N x 7 x 7 x C, regardless of original proposal size.</span><span></span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Numeric Example</div>
+      <h2>RoI Pooling: 2x2 Max Pooling Toy Example</h2>
+      <div class="grid two">
+        <div class="animation-panel">
+          <svg viewBox="0 0 700 420" role="img" aria-label="Numeric RoI Pooling toy example selecting max values from bins">
+            <text x="30" y="30" class="svg-label">Feature map values</text>
+            <g transform="translate(44 58)">
+              <rect x="0" y="0" width="300" height="300" rx="14" fill="rgba(15,23,42,.88)" />
+              <g>
+                <rect class="number-cell" x="0" y="0" width="60" height="60"/><text x="24" y="38" class="svg-small">1</text>
+                <rect class="number-cell" x="60" y="0" width="60" height="60"/><text x="84" y="38" class="svg-small">5</text>
+                <rect class="number-cell" x="120" y="0" width="60" height="60"/><text x="144" y="38" class="svg-small">2</text>
+                <rect class="number-cell" x="180" y="0" width="60" height="60"/><text x="204" y="38" class="svg-small">3</text>
+                <rect class="number-cell" x="240" y="0" width="60" height="60"/><text x="264" y="38" class="svg-small">4</text>
+                <rect class="number-cell" x="0" y="60" width="60" height="60"/><text x="24" y="98" class="svg-small">6</text>
+                <rect class="hot-cell pool-choice" x="60" y="60" width="60" height="60"/><text x="84" y="98" class="svg-small">9</text>
+                <rect class="number-cell" x="120" y="60" width="60" height="60"/><text x="144" y="98" class="svg-small">4</text>
+                <rect class="hot-cell pool-choice" x="180" y="60" width="60" height="60"/><text x="204" y="98" class="svg-small">8</text>
+                <rect class="number-cell" x="240" y="60" width="60" height="60"/><text x="264" y="98" class="svg-small">1</text>
+                <rect class="number-cell" x="0" y="120" width="60" height="60"/><text x="24" y="158" class="svg-small">2</text>
+                <rect class="number-cell" x="60" y="120" width="60" height="60"/><text x="84" y="158" class="svg-small">7</text>
+                <rect class="number-cell" x="120" y="120" width="60" height="60"/><text x="144" y="158" class="svg-small">3</text>
+                <rect class="number-cell" x="180" y="120" width="60" height="60"/><text x="204" y="158" class="svg-small">6</text>
+                <rect class="number-cell" x="240" y="120" width="60" height="60"/><text x="264" y="158" class="svg-small">5</text>
+                <rect class="number-cell" x="0" y="180" width="60" height="60"/><text x="24" y="218" class="svg-small">4</text>
+                <rect class="hot-cell pool-choice" x="60" y="180" width="60" height="60"/><text x="84" y="218" class="svg-small">8</text>
+                <rect class="number-cell" x="120" y="180" width="60" height="60"/><text x="144" y="218" class="svg-small">1</text>
+                <rect class="hot-cell pool-choice" x="180" y="180" width="60" height="60"/><text x="204" y="218" class="svg-small">9</text>
+                <rect class="number-cell" x="240" y="180" width="60" height="60"/><text x="264" y="218" class="svg-small">2</text>
+                <rect class="number-cell" x="0" y="240" width="60" height="60"/><text x="24" y="278" class="svg-small">3</text>
+                <rect class="number-cell" x="60" y="240" width="60" height="60"/><text x="84" y="278" class="svg-small">2</text>
+                <rect class="number-cell" x="120" y="240" width="60" height="60"/><text x="144" y="278" class="svg-small">7</text>
+                <rect class="number-cell" x="180" y="240" width="60" height="60"/><text x="204" y="278" class="svg-small">4</text>
+                <rect class="number-cell" x="240" y="240" width="60" height="60"/><text x="264" y="278" class="svg-small">6</text>
+              </g>
+              <rect class="roi-box" x="60" y="60" width="180" height="180" />
+              <line class="bin-line" x1="150" y1="60" x2="150" y2="240" />
+              <line class="bin-line" x1="60" y1="150" x2="240" y2="150" />
+            </g>
+            <text x="438" y="30" class="svg-label">2x2 output</text>
+            <g transform="translate(446 94)">
+              <rect width="190" height="190" rx="18" fill="rgba(15,23,42,.88)" stroke="rgba(255,255,255,.18)" />
+              <rect class="pool-out" x="18" y="18" width="70" height="70" rx="10" fill="rgba(52,211,153,.2)" stroke="#34d399" /><text x="47" y="62" class="svg-label">9</text>
+              <rect class="pool-out" x="102" y="18" width="70" height="70" rx="10" fill="rgba(52,211,153,.2)" stroke="#34d399" /><text x="131" y="62" class="svg-label">8</text>
+              <rect class="pool-out" x="18" y="102" width="70" height="70" rx="10" fill="rgba(52,211,153,.2)" stroke="#34d399" /><text x="47" y="146" class="svg-label">8</text>
+              <rect class="pool-out" x="102" y="102" width="70" height="70" rx="10" fill="rgba(52,211,153,.2)" stroke="#34d399" /><text x="131" y="146" class="svg-label">9</text>
+            </g>
+          </svg>
+        </div>
+        <div>
+          <p>The selected RoI covers a 3x3 feature-map region. We divide it into 2x2 bins and take the max activation per bin.</p>
+          <ul>
+            <li>Top-left bin max: <strong>9</strong></li>
+            <li>Top-right bin max: <strong>8</strong></li>
+            <li>Bottom-left bin max: <strong>8</strong></li>
+            <li>Bottom-right bin max: <strong>9</strong></li>
+          </ul>
+          <div class="card note-box"><p>The output remembers the strongest evidence in each spatial bin, while forcing every RoI into the same shape.</p></div>
+        </div>
+      </div>
+      <div class="footer"><span>Real models usually use 7x7; this 2x2 example makes max pooling visible.</span><span></span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Quantization</div>
+      <h2>RoI Pooling Rounds Coordinates</h2>
+      <div class="grid two">
+        <div class="animation-panel">
+          <svg viewBox="0 0 700 380" role="img" aria-label="Floating RoI boundary compared with rounded boundary">
+            <text x="38" y="34" class="svg-label">Feature Map Grid</text>
+            <g transform="translate(60 70)">
+              <rect width="360" height="240" rx="16" fill="rgba(15,23,42,.86)" stroke="rgba(255,255,255,.18)" />
+              <path d="M0 40H360M0 80H360M0 120H360M0 160H360M0 200H360M60 0V240M120 0V240M180 0V240M240 0V240M300 0V240" stroke="rgba(255,255,255,.2)" />
+              <rect class="roi-box float-roi" x="82" y="55" width="205" height="132" fill="rgba(96,165,250,.06)" stroke-dasharray="10 7" />
+              <rect class="roi-rounded-box" x="60" y="40" width="240" height="160" />
+              <path d="M82 55 L60 40 M287 187 L300 200" stroke="#facc15" stroke-width="3" />
+            </g>
+            <g transform="translate(470 96)">
+              <rect width="170" height="56" rx="16" fill="rgba(96,165,250,.1)" stroke="rgba(96,165,250,.36)" />
+              <text x="22" y="35" class="svg-small">dashed = floating RoI</text>
+              <rect y="76" width="170" height="56" rx="16" fill="rgba(251,113,133,.1)" stroke="rgba(251,113,133,.36)" />
+              <text x="22" y="111" class="svg-small">solid = rounded RoI</text>
+              <rect y="152" width="170" height="72" rx="16" fill="rgba(250,204,21,.1)" stroke="rgba(250,204,21,.36)" />
+              <text x="22" y="184" class="svg-small">small offset</text>
+              <text x="22" y="204" class="svg-small">becomes mask error</text>
+            </g>
+          </svg>
+        </div>
+        <div>
+          <p>RoI Pooling quantizes both the RoI boundaries and the bin boundaries to integer feature-map cells.</p>
+          <ul>
+            <li>For detection boxes, a little snapping is often acceptable.</li>
+            <li>For segmentation masks, one or two cells can shift object boundaries.</li>
+            <li>This is why Mask R-CNN replaces RoI Pooling with RoIAlign.</li>
+          </ul>
+          <div class="card note-box"><p>Rounding is tiny numerically, but masks are pixel-level outputs, so tiny spatial errors become visible.</p></div>
+        </div>
+      </div>
+      <div class="footer"><span>Key phrase: quantization error creates spatial misalignment.</span><span></span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">RoIAlign</div>
+      <h2>RoIAlign Keeps Floating-Point Geometry</h2>
+      <div class="grid two">
+        <div>
+          <p>RoIAlign does not snap the RoI to integer cells. It samples points inside each bin and computes values with bilinear interpolation.</p>
+          <ul>
+            <li>RoI boundary stays floating-point.</li>
+            <li>Sampling points appear inside bins.</li>
+            <li>Each sample reads from nearby feature cells using interpolation.</li>
+            <li>Samples are aggregated into the output cell.</li>
+          </ul>
+          <div class="card note-box"><p>RoIAlign asks for the feature value at an exact location, even if that location lands between grid cells.</p></div>
+        </div>
+        <div class="animation-panel">
+          <svg viewBox="0 0 700 390" role="img" aria-label="RoIAlign samples points inside bins and interpolates from nearby feature cells">
+            <text x="34" y="34" class="svg-label">Floating RoI + sampling points</text>
+            <g transform="translate(50 64)">
+              <rect width="360" height="260" rx="16" fill="rgba(15,23,42,.86)" stroke="rgba(255,255,255,.18)" />
+              <path d="M0 43H360M0 86H360M0 129H360M0 172H360M0 215H360M60 0V260M120 0V260M180 0V260M240 0V260M300 0V260" stroke="rgba(255,255,255,.2)" />
+              <rect class="roi-box float-roi" x="78" y="58" width="220" height="148" stroke-dasharray="10 7" />
+              <line class="bin-line" x1="188" y1="58" x2="188" y2="206" />
+              <line class="bin-line" x1="78" y1="132" x2="298" y2="132" />
+              <circle class="sampling-point sample-appear" cx="133" cy="95" r="7" />
+              <circle class="sampling-point sample-appear" cx="243" cy="95" r="7" />
+              <circle class="sampling-point sample-appear" cx="133" cy="169" r="7" />
+              <circle class="sampling-point sample-appear" cx="243" cy="169" r="7" />
+            </g>
+            <g transform="translate(480 92)">
+              <rect class="neighbor-flash" x="0" y="0" width="58" height="58" fill="rgba(96,165,250,.2)" stroke="#60a5fa" />
+              <rect class="neighbor-flash" x="58" y="0" width="58" height="58" fill="rgba(96,165,250,.2)" stroke="#60a5fa" />
+              <rect class="neighbor-flash" x="0" y="58" width="58" height="58" fill="rgba(96,165,250,.2)" stroke="#60a5fa" />
+              <rect class="neighbor-flash" x="58" y="58" width="58" height="58" fill="rgba(96,165,250,.2)" stroke="#60a5fa" />
+              <circle class="sampling-point sample-appear" cx="73" cy="82" r="8" />
+              <line class="interpolate-line" x1="73" y1="82" x2="29" y2="29" />
+              <line class="interpolate-line" x1="73" y1="82" x2="87" y2="29" />
+              <line class="interpolate-line" x1="73" y1="82" x2="29" y2="87" />
+              <line class="interpolate-line" x1="73" y1="82" x2="87" y2="87" />
+              <text x="-16" y="148" class="svg-small">four neighbors</text>
+              <rect class="pool-out" x="-8" y="170" width="132" height="52" rx="14" fill="rgba(52,211,153,.16)" stroke="#34d399" />
+              <text x="14" y="203" class="svg-small">aligned output</text>
+            </g>
+          </svg>
+        </div>
+      </div>
+      <div class="footer"><span>Mask R-CNN uses RoIAlign because masks require precise spatial alignment.</span><span></span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Numeric Example</div>
+      <h2>Bilinear Interpolation at One Sample Point</h2>
+      <div class="grid two">
+        <div class="animation-panel">
+          <svg viewBox="0 0 680 410" role="img" aria-label="Bilinear interpolation numerical example">
+            <text x="34" y="34" class="svg-label">Sample at (x=2.75, y=1.75)</text>
+            <g transform="translate(70 82)">
+              <rect class="neighbor-flash" x="0" y="0" width="110" height="110" fill="rgba(96,165,250,.16)" stroke="#60a5fa" />
+              <rect class="neighbor-flash" x="110" y="0" width="110" height="110" fill="rgba(96,165,250,.16)" stroke="#60a5fa" />
+              <rect class="neighbor-flash" x="0" y="110" width="110" height="110" fill="rgba(96,165,250,.16)" stroke="#60a5fa" />
+              <rect class="neighbor-flash" x="110" y="110" width="110" height="110" fill="rgba(96,165,250,.16)" stroke="#60a5fa" />
+              <text x="40" y="62" class="svg-label">10</text>
+              <text x="150" y="62" class="svg-label">14</text>
+              <text x="40" y="172" class="svg-label">18</text>
+              <text x="150" y="172" class="svg-label">22</text>
+              <circle class="sampling-point sample-appear" cx="165" cy="165" r="10" />
+              <text x="124" y="252" class="svg-small">sample point</text>
+            </g>
+            <g transform="translate(352 58)">
+              <rect width="306" height="306" rx="20" fill="rgba(255,255,255,.07)" stroke="rgba(255,255,255,.16)" />
+              <text x="18" y="34" class="svg-small">dx = 0.75, dy = 0.75</text>
+              <text x="18" y="66" class="svg-small">top-left weight</text>
+              <text x="36" y="84" class="svg-small">0.25 × 0.25 = 0.0625</text>
+              <text x="18" y="116" class="svg-small">top-right weight</text>
+              <text x="36" y="134" class="svg-small">0.75 × 0.25 = 0.1875</text>
+              <text x="18" y="166" class="svg-small">bottom-left weight</text>
+              <text x="36" y="184" class="svg-small">0.25 × 0.75 = 0.1875</text>
+              <text x="18" y="216" class="svg-small">bottom-right weight</text>
+              <text x="36" y="234" class="svg-small">0.75 × 0.75 = 0.5625</text>
+              <rect class="pool-out" x="18" y="258" width="224" height="32" rx="12" fill="rgba(52,211,153,.16)" stroke="#34d399" />
+              <text x="35" y="281" class="svg-small">value = 19.0</text>
+            </g>
+          </svg>
+        </div>
+        <div>
+          <p>If a sample point falls between four feature cells, RoIAlign blends their values according to distance.</p>
+          <div class="card">
+            <p><strong>Weighted sum:</strong></p>
+            <p>10 × 0.0625 + 14 × 0.1875 + 18 × 0.1875 + 22 × 0.5625 = <strong>19.0</strong></p>
+          </div>
+          <ul>
+            <li>Multiple sample points can be used inside a bin.</li>
+            <li>The bin output aggregates them, commonly by average or max depending on implementation.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="footer"><span>Bilinear interpolation is the core difference from snapping/rounding.</span><span></span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Architecture Diagram</div>
+      <h2>Faster R-CNN: Full Architecture Diagram</h2>
+      <div class="grid two wide-right">
+        <div>
+          <div class="tag">What changed?</div>
+          <p>Faster R-CNN replaces external Selective Search with a Region Proposal Network that shares the same CNN feature map.</p>
+          <ul>
+            <li><strong>Solved:</strong> slow external proposal generation</li>
+            <li><strong>Introduced:</strong> anchors, objectness, box regression, NMS</li>
+            <li><strong>Still problematic:</strong> two-stage detection; many anchors must be trained and filtered</li>
+          </ul>
+        </div>
+        <div class="paper-figure">
+          <img src="assets/paper-figures/faster-rcnn-vgg-rpn-fast-rcnn.jpg" alt="Faster R-CNN architecture diagram showing VGG layers, RPN, proposed regions, RoI pooling, and Fast R-CNN heads" />
+        </div>
+      </div>
+      <div class="footer"><span>Diagram: Salih et al., UHDJST Fig. 3; Faster R-CNN method: Ren et al., arXiv:1506.01497.</span><span></span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Region Proposal Network</div>
+      <h2>The RPN Slides Over the Shared Feature Map</h2>
+      <div class="grid two">
+        <div class="dog-frame">
+          <img src="assets/dog-source.jpg" alt="Dog image with feature map grid and one selected feature location" />
+          <div class="feature-overlay"></div>
+          <div style="position:absolute;left:47%;top:42%;width:16px;height:16px;border-radius:999px;background:#facc15;box-shadow:0 0 0 10px rgba(250,204,21,.25)"></div>
+          <div class="dog-label">one feature-map location</div>
+        </div>
+        <div>
+          <p>At every feature-map location, the RPN predicts proposals using a small sliding network.</p>
+          <ul>
+            <li>A 3x3 conv sees local context around that location.</li>
+            <li>For each anchor, it predicts <strong>objectness</strong>: object vs background.</li>
+            <li>For each anchor, it predicts box offsets: <strong>(tx, ty, tw, th)</strong>.</li>
+            <li>Top proposals are kept after Non-Max Suppression.</li>
+          </ul>
+          <div class="formula">per location outputs = A objectness scores + A box regressions</div>
+        </div>
+      </div>
+      <div class="footer"><span>RPN proposals are learned from the feature map, not generated by Selective Search.</span><span></span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Anchor Boxes</div>
+      <h2>Anchors Are Default Guesses at Each Location</h2>
+      <div class="grid two wide-left">
+        <div class="animation-panel">
+          <svg viewBox="0 0 720 410" role="img" aria-label="Nine anchor boxes centered at one dog-image feature-map location">
+            <image href="assets/dog-source.jpg" x="20" y="28" width="430" height="320" preserveAspectRatio="xMidYMid slice" />
+            <rect x="20" y="28" width="430" height="320" fill="url(#anchorGrid)" opacity=".45" />
+            <defs>
+              <pattern id="anchorGrid" width="43" height="40" patternUnits="userSpaceOnUse">
+                <path d="M43 0H0V40" fill="none" stroke="rgba(255,255,255,.35)" />
+              </pattern>
+            </defs>
+            <circle cx="235" cy="188" r="7" fill="#facc15" />
+            <g class="anchor-focus">
+              <rect class="anchor-thin" x="198" y="146" width="74" height="84" stroke="#60a5fa" />
+              <rect class="anchor-thin" x="178" y="126" width="114" height="124" stroke="#60a5fa" />
+              <rect class="anchor-thin" x="148" y="96" width="174" height="184" stroke="#60a5fa" />
+              <rect class="anchor-thin" x="212" y="118" width="46" height="140" stroke="#a78bfa" />
+              <rect class="anchor-thin" x="198" y="88" width="74" height="200" stroke="#a78bfa" />
+              <rect class="anchor-thin" x="178" y="58" width="114" height="260" stroke="#a78bfa" />
+              <rect class="anchor-thin" x="166" y="166" width="138" height="44" stroke="#34d399" />
+              <rect class="anchor-thin" x="136" y="148" width="198" height="80" stroke="#34d399" />
+              <rect class="anchor-thin" x="102" y="126" width="266" height="124" stroke="#34d399" />
+            </g>
+            <rect class="regressed" x="166" y="110" width="152" height="184" fill="rgba(251,113,133,.08)" stroke="#fb7185" stroke-width="4" rx="10" />
+            <g transform="translate(482 54)">
+              <text x="0" y="0" class="svg-label">3 scales x 3 ratios</text>
+              <text x="0" y="36" class="svg-small">small / medium / large</text>
+              <text x="0" y="66" class="svg-small">tall / square / wide</text>
+              <rect x="0" y="94" width="190" height="64" rx="16" fill="rgba(96,165,250,.12)" stroke="rgba(96,165,250,.35)" />
+              <text x="16" y="121" class="svg-small">objectness: 0.91</text>
+              <text x="16" y="146" class="svg-small">offsets: tx,ty,tw,th</text>
+              <rect x="0" y="180" width="190" height="70" rx="16" fill="rgba(251,113,133,.12)" stroke="rgba(251,113,133,.35)" />
+              <text x="16" y="208" class="svg-small">anchor shifts</text>
+              <text x="16" y="233" class="svg-small">into proposal</text>
+            </g>
+          </svg>
+        </div>
+        <div>
+          <p>An anchor is a reference box. It is not the final detection.</p>
+          <ul>
+            <li>Example: <strong>3 scales x 3 aspect ratios = 9 anchors</strong> per feature location.</li>
+            <li>The RPN scores each anchor as object or background.</li>
+            <li>The RPN regresses each anchor into a better proposal box.</li>
+          </ul>
+          <div class="card note-box"><p>Anchor boxes are default guesses. The RPN learns which guesses are object-like and how to adjust them.</p></div>
+        </div>
+      </div>
+      <div class="footer"><span>Animation: anchors appear at one location, then a good anchor is regressed into a proposal.</span><span></span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Anchor Training</div>
+      <h2>How Anchors Become Positive, Negative, or Ignored</h2>
+      <div class="grid two">
+        <div>
+          <p>During training, anchors are matched to ground-truth boxes by IoU.</p>
+          <ul>
+            <li><strong>Positive:</strong> high IoU with a ground-truth object, or best anchor for that object.</li>
+            <li><strong>Negative:</strong> low IoU with all objects.</li>
+            <li><strong>Ignored:</strong> middle range; not used for classification loss.</li>
+          </ul>
+          <p class="small" style="margin-top:10px">Typical Faster R-CNN-style thresholds: positive >= 0.7, negative <= 0.3. Exact values vary by implementation.</p>
+        </div>
+        <div class="diagram-panel">
+          <svg viewBox="0 0 650 360" role="img" aria-label="IoU anchor matching examples">
+            <image href="assets/dog-source.jpg" x="24" y="32" width="340" height="250" preserveAspectRatio="xMidYMid slice" />
+            <rect x="154" y="74" width="118" height="168" fill="rgba(52,211,153,.08)" stroke="#34d399" stroke-width="4" rx="10" />
+            <text x="150" y="65" class="svg-small">ground truth</text>
+            <rect x="148" y="80" width="130" height="160" fill="none" stroke="#60a5fa" stroke-width="4" rx="10" />
+            <rect x="40" y="48" width="84" height="74" fill="none" stroke="#fb7185" stroke-width="4" rx="10" />
+            <rect x="116" y="118" width="95" height="122" fill="none" stroke="#facc15" stroke-width="4" rx="10" />
+            <g transform="translate(398 58)">
+              <rect width="210" height="58" rx="16" fill="rgba(96,165,250,.13)" stroke="rgba(96,165,250,.38)" />
+              <text x="16" y="36" class="svg-small">Anchor A IoU = 0.76 → positive</text>
+              <rect y="82" width="210" height="58" rx="16" fill="rgba(251,113,133,.13)" stroke="rgba(251,113,133,.38)" />
+              <text x="16" y="118" class="svg-small">Anchor B IoU = 0.18 → negative</text>
+              <rect y="164" width="210" height="58" rx="16" fill="rgba(250,204,21,.13)" stroke="rgba(250,204,21,.38)" />
+              <text x="16" y="200" class="svg-small">Anchor C IoU = 0.45 → ignored</text>
+            </g>
+          </svg>
+        </div>
+      </div>
+      <div class="footer"><span>IoU matching teaches objectness and which anchors should regress toward each dog.</span><span></span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">NMS</div>
+      <h2>Non-Max Suppression Removes Duplicate Proposals</h2>
+      <div class="grid two wide-left">
+        <div class="animation-panel">
+          <svg viewBox="0 0 720 410" role="img" aria-label="NMS keeps the highest scoring proposal and suppresses overlapping duplicates">
+            <image href="assets/dog-source.jpg" x="20" y="30" width="430" height="320" preserveAspectRatio="xMidYMid slice" />
+            <rect x="150" y="94" width="150" height="196" fill="rgba(52,211,153,.08)" stroke="#34d399" stroke-width="5" rx="12" />
+            <rect class="nms-kill" x="142" y="102" width="154" height="184" fill="rgba(96,165,250,.08)" stroke="#60a5fa" stroke-width="4" rx="12" />
+            <rect class="nms-kill" x="164" y="86" width="142" height="196" fill="rgba(167,139,250,.08)" stroke="#a78bfa" stroke-width="4" rx="12" />
+            <rect class="nms-kill" x="132" y="112" width="148" height="170" fill="rgba(250,204,21,.08)" stroke="#facc15" stroke-width="4" rx="12" />
+            <g transform="translate(480 72)">
+              <text x="0" y="0" class="svg-label">Scores</text>
+              <text x="0" y="42" class="svg-small">0.94 keep</text>
+              <text class="nms-kill" x="0" y="82" class="svg-small">0.89 suppress</text>
+              <text class="nms-kill" x="0" y="122" class="svg-small">0.83 suppress</text>
+              <text class="nms-kill" x="0" y="162" class="svg-small">0.76 suppress</text>
+              <rect class="regressed" x="0" y="202" width="176" height="58" rx="16" fill="rgba(52,211,153,.14)" stroke="#34d399" />
+              <text class="regressed" x="18" y="238" class="svg-small">final proposal</text>
+            </g>
+          </svg>
+        </div>
+        <div>
+          <p>The RPN may produce many overlapping boxes around the same dog. NMS keeps the highest-scoring box and removes highly overlapping duplicates.</p>
+          <ol style="padding-left:22px;margin-top:12px">
+            <li>Sort proposals by objectness score.</li>
+            <li>Keep the best proposal.</li>
+            <li>Remove boxes whose IoU with it is too high.</li>
+            <li>Repeat for the remaining boxes.</li>
+          </ol>
+        </div>
+      </div>
+      <div class="footer"><span>NMS reduces many RPN boxes to a manageable set of RoIs for the detection head.</span><span></span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Original Paper Figure</div>
+      <h2>Mask R-CNN: Original Architecture Figure</h2>
+      <div class="grid two wide-right">
+        <div>
+          <div class="tag">What changed?</div>
+          <p>Mask R-CNN extends Faster R-CNN with a parallel mask branch and replaces RoI Pooling with RoIAlign.</p>
+          <ul>
+            <li><strong>Solved:</strong> instance-level segmentation, not only boxes</li>
+            <li><strong>Important fix:</strong> RoIAlign avoids quantization misalignment</li>
+            <li><strong>Still problematic:</strong> two-stage model; mask resolution is predicted per RoI then resized</li>
+          </ul>
+        </div>
+        <div class="paper-figure">
+          <img src="assets/paper-figures/mask-rcnn-fig-1.png" alt="Original Mask R-CNN paper architecture figure showing RoIAlign and mask branch" />
+        </div>
+      </div>
+      <div class="footer"><span>Source: He et al., “Mask R-CNN,” arXiv:1703.06870, Fig. 1.</span><span></span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Mask R-CNN Mechanics</div>
+      <h2>Mask R-CNN Adds a Spatial Mask Head</h2>
+      <div class="grid two wide-left">
+        <div class="dog-frame">
+          <img src="assets/dog-source.jpg" alt="Dog image with detection box and translucent instance mask overlay" />
+          <div class="overlay-box proposal-b"></div>
+          <div class="mask-demo"></div>
+          <div class="dog-label">box + mask for one dog instance</div>
+        </div>
+        <div>
+          <p>For each RoI, Mask R-CNN predicts three outputs.</p>
+          <ul>
+            <li><strong>Class head:</strong> what category is this RoI?</li>
+            <li><strong>Box head:</strong> refine the bounding box.</li>
+            <li><strong>Mask head:</strong> predict a small per-class binary mask, often 28 x 28.</li>
+          </ul>
+          <div class="arch" style="margin-top:14px">
+            <div class="arch-row" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+              <div class="arch-node"><div class="arch-title">RoIAlign</div><span class="dim">N x 7 x 7 x C</span></div>
+              <div class="arch-node"><div class="arch-title">Class</div><span class="dim">N x (K+1)</span></div>
+              <div class="arch-node"><div class="arch-title">Box</div><span class="dim">N x 4K</span></div>
+              <div class="arch-node"><div class="arch-title">Mask</div><span class="dim">N x K x 28 x 28</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="footer"><span>RoIAlign is one reason Mask R-CNN masks line up better with object boundaries.</span><span></span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Comparison</div>
+      <h2>RoI Pooling vs RoIAlign</h2>
+      <table>
+        <thead><tr><th>Method</th><th>Coordinates</th><th>Feature value</th><th>Aggregation</th><th>Best fit</th></tr></thead>
+        <tbody>
+          <tr><td><strong>RoI Pooling</strong></td><td>Rounds RoI and bin boundaries</td><td>Uses existing integer feature cells</td><td>Max pooling per bin</td><td class="warn">Good for detection, can misalign masks</td></tr>
+          <tr><td><strong>RoIAlign</strong></td><td>Keeps floating-point RoI geometry</td><td>Bilinear interpolation from nearby cells</td><td>Average or max over sample points</td><td class="good">Better for instance masks</td></tr>
+        </tbody>
+      </table>
+      <div class="grid two" style="margin-top:20px">
+        <div class="card"><p><strong>Detection tolerance:</strong> a bounding box can still be useful if the feature is slightly shifted.</p></div>
+        <div class="card"><p><strong>Mask sensitivity:</strong> pixel labels need the feature grid to stay aligned with the original object boundary.</p></div>
+      </div>
+      <div class="footer"><span>Key phrase: boxes tolerate rough alignment; masks need precise alignment.</span><span></span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Family Comparison</div>
+      <h2>What Each Model Changes</h2>
+      <table>
+        <thead>
+          <tr><th>Model</th><th>Proposal method</th><th>Feature sharing</th><th>RoI operation</th><th>Output heads</th><th>Main bottleneck solved</th><th>Remaining limitation</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><strong>R-CNN</strong></td><td>Selective Search</td><td class="bad">No: CNN per crop</td><td>Crop + warp raw image</td><td>Class + box</td><td>Uses CNN features for detection</td><td>Very slow; external proposals</td></tr>
+          <tr><td><strong>Fast R-CNN</strong></td><td>Selective Search</td><td class="good">Yes: CNN once</td><td>RoI Pooling</td><td>Class + box</td><td>Removes repeated CNN passes</td><td>External proposals; quantization</td></tr>
+          <tr><td><strong>Faster R-CNN</strong></td><td>RPN with anchors</td><td class="good">Yes</td><td>RoI Pooling / variants</td><td>Objectness + class + box</td><td>Learns proposals inside network</td><td>Anchor design and NMS remain</td></tr>
+          <tr><td><strong>Mask R-CNN</strong></td><td>RPN with anchors</td><td class="good">Yes</td><td>RoIAlign</td><td>Class + box + mask</td><td>Adds instance segmentation</td><td>Mask is per RoI and resized</td></tr>
+        </tbody>
+      </table>
+      <div class="footer"><span>This table is the interview recap: proposals, sharing, RoI op, heads, bottleneck.</span><span></span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Final Takeaways</div>
+      <h2>What Students Should Remember</h2>
+      <div class="grid two">
+        <div>
+          <ul>
+            <li><strong>R-CNN</strong> is slow because it runs CNN on each proposal crop.</li>
+            <li><strong>Selective Search</strong> greedily merges superpixels and stores many class-agnostic boxes.</li>
+            <li><strong>Fast R-CNN</strong> shares the backbone feature map and uses RoI Pooling.</li>
+            <li><strong>RoI Pooling</strong> creates fixed-size features but rounds geometry.</li>
+            <li><strong>Faster R-CNN</strong> learns proposals with an RPN and anchor boxes.</li>
+            <li><strong>Mask R-CNN</strong> uses RoIAlign and adds a mask branch.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <p class="quote" style="font-size:clamp(25px,2.25vw,34px)">Detection answers <span class="highlight">“where is the dog?”</span><br><br>Instance segmentation answers <span class="highlight">“which exact pixels are that dog?”</span></p>
+        </div>
+      </div>
+      <div class="footer"><span>End with the idea: proposals → shared features → learned anchors → aligned masks.</span><span></span></div>
+    </section>
+  </div>
+
+  <div class="controls">
+    <button id="prev" aria-label="Previous slide">Prev</button>
+    <span id="count"></span>
+    <button id="next" aria-label="Next slide">Next</button>
+  </div>
+
+  <script>
+    const slides = [...document.querySelectorAll('.slide')];
+    let index = 0;
+    const count = document.getElementById('count');
+    const bar = document.getElementById('bar');
+
+    slides.forEach((slide, i) => {
+      const page = slide.querySelector('.footer span:last-child');
+      if (page) page.textContent = `${i + 1} / ${slides.length}`;
+    });
+
+    function show(i) {
+      index = Math.max(0, Math.min(slides.length - 1, i));
+      slides.forEach((slide, n) => slide.classList.toggle('active', n === index));
+      count.textContent = `${index + 1} / ${slides.length}`;
+      bar.style.width = `${((index + 1) / slides.length) * 100}%`;
+      document.title = `Slide ${index + 1}/${slides.length} · Detailed R-CNN Family`;
+    }
+
+    document.getElementById('prev').addEventListener('click', () => show(index - 1));
+    document.getElementById('next').addEventListener('click', () => show(index + 1));
+    document.addEventListener('keydown', (e) => {
+      if (['ArrowRight', 'PageDown', ' '].includes(e.key)) show(index + 1);
+      if (['ArrowLeft', 'PageUp'].includes(e.key)) show(index - 1);
+      if (e.key === 'Home') show(0);
+      if (e.key === 'End') show(slides.length - 1);
+    });
+
+    show(0);
+  </script>
+</body>
+</html>
