@@ -5,6 +5,7 @@ notes, diagrams, papers, references, and examples.
 
 ## Topics
 
+- [AI Infrastructure](./ai-infrastructure/)
 - [Computer Vision](./computer-vision/)
 
 ## Contributing
