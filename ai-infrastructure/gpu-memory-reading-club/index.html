@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GPU 記憶體讀書會</title>
+<meta name="description" content="四堂課，從 roofline 與記憶體階層一路走到機櫃群推論：投影片、講稿、互動教具與複習測驗。">
+<link rel="stylesheet" href="assets/site.css">
+<style>
+  header.hero { padding: 40px 0 24px; }
+  .eyebrow { font-family: var(--mono); font-size: 13px; color: var(--mem); letter-spacing: .06em; margin: 0 0 10px; }
+  h1 { font-size: clamp(28px, 5vw, 40px); line-height: 1.25; margin: 0 0 14px; text-wrap: balance; max-width: 760px; }
+  .lede { font-size: 17px; color: var(--mute); max-width: 720px; margin: 0; }
+  .models { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin: 24px 0 0; }
+  .model { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; font-size: 15px; }
+  .model b { display: block; margin-bottom: 2px; }
+  .model.a b { color: var(--comp); } .model.b b { color: var(--mem); }
+
+  h2 { font-size: 20px; margin: 48px 0 6px; }
+  .h2-sub { color: var(--mute); margin: 0 0 18px; font-size: 15px; }
+
+  .classes { display: flex; flex-direction: column; gap: 14px; }
+  .class { display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 4px 16px; background: var(--surface);
+           border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px; }
+  .class .no { grid-row: span 3; width: 44px; height: 44px; border-radius: 10px; display: grid; place-items: center;
+               font: 700 20px var(--mono); color: var(--surface); background: var(--mem); }
+  .class:nth-child(2n) .no { background: var(--comp); }
+  .class:last-child .no { background: var(--purp); }
+  .class h3 { font-size: 18px; margin: 0; line-height: 1.4; }
+  .class .layer { font-size: 13px; color: var(--mute); font-weight: 400; margin-left: 6px; }
+  .class p { margin: 2px 0 8px; font-size: 15px; color: var(--ink); }
+  .links { display: flex; flex-wrap: wrap; gap: 8px; }
+  .links a { font-size: 14px; text-decoration: none; padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line); color: var(--ink); background: var(--bg); }
+  .links a:hover { border-color: var(--mem); color: var(--mem); }
+  .links a.main { background: var(--mem); border-color: var(--mem); color: var(--surface); font-weight: 700; }
+  .links a.main:hover { color: var(--surface); opacity: .9; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+  .tile { display: block; text-decoration: none; color: var(--ink); background: var(--surface); border: 1px solid var(--line);
+          border-radius: var(--radius); padding: 14px 16px; }
+  .tile:hover { border-color: var(--mem); }
+  .tile b { display: block; font-size: 15px; margin-bottom: 4px; }
+  .tile span { display: block; font-size: 14px; color: var(--mute); line-height: 1.55; }
+  .tile small { display: block; margin-top: 8px; font-family: var(--mono); font-size: 12px; color: var(--mem); }
+
+  .how { font-size: 15px; color: var(--mute); }
+  .how kbd { font-family: var(--mono); font-size: 12px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: var(--surface); color: var(--ink); }
+  footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 14px; color: var(--mute); }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <header class="hero">
+    <p class="eyebrow">GPU MEMORY READING CLUB · 四堂課</p>
+    <h1>為什麼同一個模型，換個搬資料的方式就差十倍？</h1>
+    <p class="lede">給會寫 PyTorch、但沒碰過 CUDA 與計算機組織的 data science／ML 工程師。從一張 GPU 的記憶體階層出發，一路走到上百張卡的推論叢集：每一堂都在回答「資料在哪、怎麼搬、誰在等誰」。</p>
+    <div class="models">
+      <div class="model a"><b>一把尺：Roofline</b>算術強度 = FLOPs ÷ 搬動的 Bytes。低於 ridge point 就是 memory-bound，換更強的算力也沒用。</div>
+      <div class="model b"><b>一張地圖：記憶體階層</b>每離運算單元遠一站就慢一個數量級。瓶頸永遠是資料必經的最慢那段路。</div>
+    </div>
+  </header>
+
+  <section aria-labelledby="classes-h">
+    <h2 id="classes-h">四堂課</h2>
+    <p class="h2-sub">同一個敵人（decode 是 memory-bound），四個高度：硬體的尺 → 單卡到多卡 → 單機引擎 → 從模型架構到一整排機櫃。照順序讀，每一堂都接住上一堂留下的問題。</p>
+    <div class="classes">
+      <article class="class">
+        <div class="no">1</div>
+        <h3>硬體 × Transformer<span class="layer">一張卡本身</span></h3>
+        <p>roofline、記憶體階層、GPU 的 SM／warp／tensor core，把 Transformer 放上機器：訓練、prefill、decode 各被誰卡住。最後看模型與硬體怎麼互相塑造（CNN → Transformer → 混合架構、TPU、Groq）。</p>
+        <div class="links"><a class="main" href="slides/full-series.html">投影片 · 34 頁</a><a href="notes/view.html?doc=full-series">講稿</a><a href="interactive/gpu-map.html">GPU 下鑽地圖</a><a href="interactive/transformer-map.html">Transformer 地圖</a><a href="quiz/index.html?class=1">複習測驗</a></div>
+      </article>
+      <article class="class">
+        <div class="no">2</div>
+        <h3>Transformer × GPU<span class="layer">一張卡 → 多張卡</span></h3>
+        <p>玩具 Transformer 逐個 block 對到 GPU 單元，看哪裡吃 tensor core、哪裡 memory-bound。一張卡裝不下之後：DP／TP／PP／EP 怎麼切，NVLink、NVSwitch、InfiniBand 各自扛哪一段。</p>
+        <div class="links"><a class="main" href="slides/class2-transformer-gpu.html">投影片 · 24 頁</a><a href="notes/view.html?doc=class2-transformer-gpu">講稿</a><a href="interactive/parallelism-map.html">平行切分地圖</a><a href="interactive/interconnect-map.html">互連地圖</a><a href="quiz/index.html?class=2">複習測驗</a></div>
+      </article>
+      <article class="class">
+        <div class="no">3</div>
+        <h3>推論引擎單機篇：SGLang × vLLM<span class="layer">一台機器的排程</span></h3>
+        <p>推論引擎會撞到的問題①–④：程式難平行、前綴被重算、結構化輸出太慢、CPU 排程變瓶頸。每個問題都對照兩家的寫法（radix tree vs 雜湊鏈、jump-forward、zero-overhead scheduler）。</p>
+        <div class="links"><a class="main" href="slides/class3-engine-single-node.html">投影片 · 27 頁</a><a href="notes/view.html?doc=class3-engine-single-node">講稿</a><a href="interactive/serving-map.html">推論服務地圖（模式 1–4）</a><a href="quiz/index.html?class=3">複習測驗</a></div>
+      </article>
+      <article class="class">
+        <div class="no">4</div>
+        <h3>最終章：從模型到機櫃<span class="layer">模型內部 → 全部組裝起來</span></h3>
+        <p>前半先認識要搬上機櫃的模型：decode 怎麼一次吐一個字、MoE 怎麼挑專家，再用五個旋鈕（壓 KV、少算、少看、一次多產、降精度）過一遍 DeepSeek／Kimi／MiniMax／Qwen／GLM 的思路。後半跟著一個請求穿過 SGLang 96×H100 叢集：四種資料 × 四條路，真瓶頸是 scale-up 域的大小。</p>
+        <div class="links"><a class="main" href="slides/class4-models-to-racks.html">投影片 · 28 頁</a><a href="notes/view.html?doc=class4-models-to-racks">講稿</a><a href="interactive/rack-journey-map.html">機櫃旅程地圖</a><a href="interactive/serving-map.html">推論服務地圖（模式 5 PD 分離）</a><a href="quiz/index.html?class=4">複習測驗</a></div>
+      </article>
+    </div>
+  </section>
+
+  <section aria-labelledby="tools-h">
+    <h2 id="tools-h">互動教具</h2>
+    <p class="h2-sub">上課時從投影片的「互動環節」頁切過去，也可以單獨玩。</p>
+    <div class="grid">
+      <a class="tile" href="interactive/gpu-map.html"><b>GPU 下鑽地圖</b><span>Cluster → Node → GPU → SM → CUDA／Tensor core，一層層往下點。</span><small>第一堂</small></a>
+      <a class="tile" href="interactive/transformer-map.html"><b>玩具 Transformer 地圖</b><span>decoder 全景 → attention → matmul 的 L2⟷HBM 搬運 → FlashAttention，含訓練／prefill／decode 與 GPU／TPU／Groq。</span><small>第一堂</small></a>
+      <a class="tile" href="interactive/parallelism-map.html"><b>平行切分地圖</b><span>同一個玩具模型攤到多卡：裝不下 → DP → TP → PP，看權重矩陣怎麼被切。</span><small>第二堂</small></a>
+      <a class="tile" href="interactive/interconnect-map.html"><b>NVIDIA 互連地圖</b><span>NVLink／NVSwitch／C2C、PCIe、InfiniBand vs Spectrum-X、GPUDirect、CMX 六層下鑽。</span><small>第二堂延伸</small></a>
+      <a class="tile" href="interactive/serving-map.html"><b>推論服務地圖</b><span>Naive → continuous batching → paged KV → radix 前綴共用 → PD 分離，看時間軸、HBM 與 roofline 位置。</span><small>第三、四堂</small></a>
+      <a class="tile" href="interactive/rack-journey-map.html"><b>機櫃旅程地圖</b><span>KV 交接、decode 一步的專家落點、通訊時間帳；H100／B200／GB200 NVL72 切換。</span><small>第四堂</small></a>
+    </div>
+  </section>
+
+  <section aria-labelledby="more-h">
+    <h2 id="more-h">補充資料</h2>
+    <div class="grid">
+      <a class="tile" href="notes/view.html?doc=glossary"><b>術語表</b><span>全系列縮寫（GEMM、HBM、KV cache、GQA…）的英文全稱、中文與一句話說明。</span></a>
+      <a class="tile" href="notes/view.html?doc=transformer-interactive"><b>Transformer 地圖導讀</b><span>玩具 Transformer 互動地圖的結構、三種模式的資料流與展示動線。</span></a>
+      <a class="tile" href="https://github.com/ChesterHsieh/Always_try_to_learn/tree/main/gpu-memory-reading-club/demos"><b>可重現的 demo</b><span>五支 PyTorch 小程式：roofline、pinned vs pageable、decode batch sweep、prefetch overlap、FLOPs vs 平行度。</span><small>GitHub</small></a>
+    </div>
+  </section>
+
+  <section aria-labelledby="how-h">
+    <h2 id="how-h">怎麼用</h2>
+    <p class="how">投影片預設是捲動閱讀；按 <kbd>F</kbd> 或右上角「簡報模式」全螢幕播放，<kbd>←</kbd> <kbd>→</kbd> 翻頁、<kbd>Esc</kbd> 離開。網址後面加 <code>#s12</code> 可直接跳到第 12 頁。複習測驗可以用 <kbd>A</kbd>–<kbd>D</kbd> 作答。</p>
+  </section>
+
+  <footer>原始碼與投影片產生腳本：<a href="https://github.com/ChesterHsieh/Always_try_to_learn/tree/main/gpu-memory-reading-club">GitHub · gpu-memory-reading-club</a></footer>
+</main>
+</body>
+</html>

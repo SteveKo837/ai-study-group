@@ -1,0 +1,35 @@
+/* 讀書會網站共用樣式：首頁、講稿閱讀器、複習測驗。投影片頁自帶樣式（slides/build/deck-template.html）。 */
+:root {
+  --bg: #F6F8FB; --surface: #FFFFFF; --surface-2: #EEF2F8; --ink: #0E1726; --mute: #52627A; --line: #D8E0EC;
+  --mem: #0284C7; --comp: #C2410C; --good: #047857; --warn: #BE123C; --purp: #6D28D9;
+  --mem-tint: #E0F2FE; --comp-tint: #FFEDD5; --good-tint: #D1FAE5; --warn-tint: #FFE4E6;
+  --radius: 10px; --mono: Menlo, "JetBrains Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0A111D; --surface: #0E1726; --surface-2: #16233A; --ink: #EAF1FB; --mute: #8FA6C4; --line: #2A3D5C;
+    --mem: #38BDF8; --comp: #F59E0B; --good: #34D399; --warn: #FB7185; --purp: #A78BFA;
+    --mem-tint: #10455F; --comp-tint: #4A3410; --good-tint: #123D31; --warn-tint: #4A2433;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0A111D; --surface: #0E1726; --surface-2: #16233A; --ink: #EAF1FB; --mute: #8FA6C4; --line: #2A3D5C;
+  --mem: #38BDF8; --comp: #F59E0B; --good: #34D399; --warn: #FB7185; --purp: #A78BFA;
+  --mem-tint: #10455F; --comp-tint: #4A3410; --good-tint: #123D31; --warn-tint: #4A2433;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); line-height: 1.7;
+       font-family: "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", system-ui, sans-serif; }
+a { color: var(--mem); }
+code, pre { font-family: var(--mono); }
+
+.topbar { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 12px; padding: 10px 16px;
+          background: var(--surface); border-bottom: 1px solid var(--line); font-size: 14px; }
+.topbar .title { flex: 1; min-width: 0; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.topbar a, .btn { color: var(--mute); text-decoration: none; background: none; border: 1px solid var(--line);
+       border-radius: 6px; padding: 5px 10px; font: inherit; font-size: 14px; cursor: pointer; white-space: nowrap; }
+.topbar a:hover, .btn:hover { color: var(--ink); border-color: var(--mute); }
+
+.wrap { max-width: 1080px; margin: 0 auto; padding: 32px 16px 64px; }

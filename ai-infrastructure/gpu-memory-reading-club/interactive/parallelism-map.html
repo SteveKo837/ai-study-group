@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>多卡平行互動地圖 — 把玩具 Transformer 攤到多張卡（DP / TP / PP × NVLink 互連）</title>
+<style>
+  :root {
+    --bg: #0E1726; --bg2: #16233A; --bg3: #1C2E4A;
+    --ink: #EAF1FB; --mute: #8FA6C4; --line: #2A3D5C; --foot: #5C7299;
+    --mem: #38BDF8; --comp: #F59E0B; --warn: #FB7185; --good: #34D399; --purp: #A78BFA;
+    --memtint: #10455F; --comptint: #4A3410; --warntint: #4A2433; --goodtint: #123D31; --purptint: #2A2150;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body { background: var(--bg); color: var(--ink); font-family: "PingFang TC", "Noto Sans TC", system-ui, sans-serif; overflow: hidden; user-select: none; }
+  .mono { font-family: Menlo, ui-monospace, monospace; }
+
+  #topbar { display: flex; align-items: center; gap: 14px; padding: 11px 22px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  #crumbs { display: flex; align-items: center; gap: 6px; font-size: 13.5px; }
+  .crumb { padding: 4px 11px; border-radius: 8px; cursor: pointer; background: var(--bg2); color: var(--mute); border: 1px solid var(--line); transition: all .15s; }
+  .crumb:hover { color: var(--ink); border-color: var(--mem); }
+  .crumb.active { background: var(--mem); color: var(--bg); font-weight: 700; border-color: var(--mem); }
+  .crumb.future { opacity: .35; pointer-events: none; }
+  .sep { color: var(--foot); }
+  #hint { margin-left: auto; color: var(--foot); font-size: 11.5px; }
+  #hint kbd { background: var(--bg3); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; font-family: Menlo, monospace; font-size: 10.5px; color: var(--mute); }
+
+  #stage { display: flex; height: calc(100% - 52px); }
+  #canvas { flex: 1; position: relative; overflow: hidden; }
+  .level { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; opacity: 0; transform: scale(.94); pointer-events: none; transition: opacity .3s ease, transform .3s ease; padding: 22px; }
+  .level.show { opacity: 1; transform: scale(1); pointer-events: auto; }
+
+  #panel { width: 350px; border-left: 1px solid var(--line); padding: 20px; display: flex; flex-direction: column; gap: 13px; overflow-y: auto; }
+  #panel h2 { font-size: 18.5px; line-height: 1.25; }
+  #panel h2 .lv { color: var(--mem); font-family: Menlo, monospace; font-size: 12px; display: block; margin-bottom: 3px; }
+  #panel p.desc { color: var(--mute); font-size: 13px; line-height: 1.62; }
+  table.facts { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  table.facts td { padding: 6px 8px; border: 1px solid var(--line); }
+  table.facts td:first-child { color: var(--mute); width: 42%; }
+  table.facts td.v { font-family: Menlo, monospace; color: var(--mem); font-weight: 700; }
+  .teach { background: var(--bg2); border-left: 4px solid var(--comp); border-radius: 6px; padding: 11px 13px; font-size: 12.5px; line-height: 1.6; }
+  .teach b { color: var(--comp); }
+  .nextstep { color: var(--good); font-size: 12.5px; }
+
+  /* ---------- diagram building blocks ---------- */
+  .stack { display: flex; flex-direction: column; align-items: center; gap: 16px; }
+  .rowwrap { display: flex; align-items: flex-end; justify-content: center; gap: 16px; flex-wrap: wrap; }
+  .hd { font-size: 15px; font-weight: 700; text-align: center; }
+  .sub { font-size: 12px; color: var(--mute); text-align: center; line-height: 1.5; }
+
+  .gpu { border: 1.5px solid var(--line); border-radius: 12px; background: var(--bg2); padding: 10px 12px; min-width: 132px; position: relative; }
+  .gpu .glabel { font-family: Menlo, monospace; font-size: 12px; font-weight: 700; color: var(--mem); text-align: center; margin-bottom: 8px; }
+  .gpu.big { min-width: 300px; padding: 16px 18px; }
+  .gpu.mem { border-color: var(--mem); } .gpu.comp { border-color: var(--comp); } .gpu.good { border-color: var(--good); }
+  .gpu.purp { border-color: var(--purp); } .gpu.warn { border-color: var(--warn); }
+
+  /* memory bars (weights / kv / activation) */
+  .bars { display: flex; flex-direction: column; gap: 6px; }
+  .bar { height: 24px; border-radius: 5px; display: flex; align-items: center; padding: 0 9px; font-size: 11px; font-weight: 700; color: var(--bg); white-space: nowrap; overflow: visible; }
+  .bar.comp { background: var(--comp); } .bar.mem { background: var(--mem); } .bar.good { background: var(--good); }
+  .barframe { border: 1.5px dashed var(--foot); border-radius: 7px; padding: 7px; position: relative; }
+  .barframe.overflow { border-color: var(--warn); }
+  .oflabel { position: absolute; right: -8px; top: -12px; background: var(--warn); color: var(--bg); font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
+
+  /* mini full-model icon (DP) */
+  .modelmini { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3px; }
+  .modelmini i { width: 15px; height: 15px; border-radius: 3px; background: var(--comp); }
+  .shard { font-size: 10.5px; color: var(--mute); text-align: center; margin-top: 7px; }
+
+  /* ---- 一層 Transformer layer 解剖 ---- */
+  .layerbox { border: 1.5px solid var(--comp); border-radius: 12px; background: var(--bg2); padding: 11px 13px; }
+  .layerbox .lb-hd { font-size: 12.5px; font-weight: 700; color: var(--comp); text-align: center; margin-bottom: 8px; }
+  .lb-sect { border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; margin: 5px 0; }
+  .lb-sect.attn { border-color: var(--mem); }
+  .lb-sect.ffn  { border-color: var(--comp); }
+  .lb-lab { font-size: 10px; color: var(--mute); display: block; margin-bottom: 5px; text-align: center; }
+  .lb-lab b.a { color: var(--mem); } .lb-lab b.f { color: var(--comp); }
+  .lb-mats { display: flex; gap: 7px; justify-content: center; flex-wrap: wrap; }
+  .lb-norm { font-size: 9.5px; color: var(--foot); text-align: center; margin: 2px 0; }
+
+  /* 權重矩陣：沿寬切成 4 片（4 GPU 顏色） */
+  .wmat { text-align: center; }
+  .wmat .bar4 { display: flex; width: 74px; height: 22px; border-radius: 4px; overflow: hidden; border: 1px solid var(--line); }
+  .wmat.big .bar4 { width: 108px; height: 24px; }
+  .wmat .bar4 span { flex: 1; border-right: 1px dashed rgba(14,23,38,.7); }
+  .wmat .bar4 span:last-child { border-right: none; }
+  .seg0 { background: var(--mem); } .seg1 { background: var(--comp); } .seg2 { background: var(--good); } .seg3 { background: var(--purp); }
+  .wmat .cap { font-family: Menlo, monospace; font-size: 10px; color: var(--mute); margin-top: 3px; }
+  .tp-gpus { display: flex; gap: 8px; justify-content: center; }
+  .tp-gpu { border: 1.5px solid; border-radius: 9px; padding: 7px 10px; text-align: center; min-width: 96px; background: var(--bg2); }
+  .tp-gpu.g0 { border-color: var(--mem); } .tp-gpu.g1 { border-color: var(--comp); } .tp-gpu.g2 { border-color: var(--good); } .tp-gpu.g3 { border-color: var(--purp); }
+  .tp-gpu .gl { font-family: Menlo, monospace; font-size: 11px; font-weight: 700; }
+  .tp-gpu.g0 .gl { color: var(--mem); } .tp-gpu.g1 .gl { color: var(--comp); } .tp-gpu.g2 .gl { color: var(--good); } .tp-gpu.g3 .gl { color: var(--purp); }
+  .tp-gpu .gd { font-size: 9.5px; color: var(--mute); margin-top: 3px; line-height: 1.3; }
+  .cutcap { font-size: 11.5px; color: var(--comp); text-align: center; font-weight: 700; }
+
+  /* PP：整層分段 */
+  .lstack { display: flex; gap: 5px; align-items: center; justify-content: center; flex-wrap: wrap; }
+  .ppstage { border: 1.5px solid; border-radius: 10px; padding: 8px 9px; text-align: center; background: var(--bg2); }
+  .ppstage.g0 { border-color: var(--mem); } .ppstage.g1 { border-color: var(--comp); } .ppstage.g2 { border-color: var(--good); } .ppstage.g3 { border-color: var(--purp); }
+  .ppstage .pl { font-family: Menlo, monospace; font-size: 10.5px; font-weight: 700; margin-bottom: 5px; }
+  .ppstage.g0 .pl { color: var(--mem); } .ppstage.g1 .pl { color: var(--comp); } .ppstage.g2 .pl { color: var(--good); } .ppstage.g3 .pl { color: var(--purp); }
+  .lyr { width: 74px; height: 16px; border-radius: 3px; margin: 3px 0; display: flex; align-items: center; justify-content: center; font-size: 8.5px; color: var(--bg); font-weight: 700; }
+  .lyr.g0 { background: var(--mem); } .lyr.g1 { background: var(--comp); } .lyr.g2 { background: var(--good); } .lyr.g3 { background: var(--purp); }
+  .ppflow { color: var(--good); font-size: 18px; }
+
+  /* collective arrows */
+  .collbar { border-radius: 999px; padding: 8px 16px; font-size: 12.5px; font-weight: 700; text-align: center; border: 1.5px solid; }
+  .collbar.allreduce { color: var(--mem); border-color: var(--mem); background: var(--memtint); }
+  .collbar.p2p { color: var(--good); border-color: var(--good); background: var(--goodtint); }
+  .collbar.heavy { color: var(--comp); border-color: var(--comp); background: var(--comptint); }
+  .dnarr { color: var(--comp); font-size: 20px; text-align: center; }
+  .badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 3px 11px; border-radius: 999px; }
+  .badge.nvl { color: var(--good); border: 1.5px solid var(--good); background: var(--goodtint); }
+  .badge.bubble { color: var(--warn); border: 1.5px solid var(--warn); background: var(--warntint); }
+  .clickable { cursor: pointer; transition: filter .15s, transform .15s; }
+  .clickable:hover { filter: brightness(1.3); transform: translateY(-2px); }
+  .pulse { animation: pulse 2s infinite; border-radius: 12px; }
+  @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(52,211,153,.5);} 50% { box-shadow: 0 0 0 8px rgba(52,211,153,0);} }
+
+  /* bubble timeline (PP) */
+  .timeline { display: flex; flex-direction: column; gap: 5px; }
+  .tlrow { display: flex; align-items: center; gap: 6px; }
+  .tllab { width: 54px; font-family: Menlo, monospace; font-size: 10.5px; color: var(--mute); }
+  .tlcell { width: 30px; height: 15px; border-radius: 3px; }
+  .tlcell.work { background: var(--mem); } .tlcell.idle { background: var(--bg3); border: 1px dashed var(--foot); }
+
+  /* interconnect zones (L5) */
+  .zones { display: flex; gap: 22px; align-items: stretch; }
+  .zone { border: 1.5px solid var(--line); border-radius: 14px; padding: 16px; min-width: 320px; }
+  .zone.up { border-color: var(--good); } .zone.out { border-color: var(--comp); }
+  .zone h3 { font-size: 15px; margin-bottom: 4px; } .zone.up h3 { color: var(--good); } .zone.out h3 { color: var(--comp); }
+  .zone .zsub { font-size: 11.5px; color: var(--mute); margin-bottom: 12px; line-height: 1.5; }
+  .zgpus { display: flex; gap: 7px; justify-content: center; margin-bottom: 12px; flex-wrap: wrap; }
+  .zg { width: 34px; height: 34px; border-radius: 7px; background: var(--bg3); border: 1px solid var(--line); display: flex; align-items: center; justify-content: center; font-family: Menlo, monospace; font-size: 10px; color: var(--mute); }
+  .zline { text-align: center; font-family: Menlo, monospace; font-size: 12px; font-weight: 700; padding: 7px; border-radius: 8px; }
+  .zone.up .zline { color: var(--good); background: var(--goodtint); }
+  .zone.out .zline { color: var(--comp); background: var(--comptint); }
+  .maps { margin-top: 11px; font-size: 11.5px; color: var(--mute); line-height: 1.55; }
+  .maps b.g { color: var(--good); } .maps b.c { color: var(--comp); }
+  .gennote { margin-top: 12px; font-size: 11px; color: var(--foot); text-align: center; line-height: 1.5; max-width: 720px; }
+  .gennote b { color: var(--purp); }
+</style>
+</head>
+<body>
+  <div id="topbar">
+    <div id="crumbs"></div>
+    <div id="hint"><kbd>1</kbd>–<kbd>6</kbd> 跳層　<kbd>Esc</kbd> 回上層</div>
+  </div>
+
+  <div id="stage">
+    <div id="canvas">
+      <!-- L0 單卡 -->
+      <div class="level" id="L0">
+        <div class="stack">
+          <div class="hd" style="color:var(--mem)">一顆 GPU 就跑完整個 Transformer</div>
+          <div class="gpu big mem">
+            <div class="glabel">1 顆 GPU · HBM（80–192 GB）</div>
+            <div class="barframe">
+              <div class="bars">
+                <div class="bar comp" style="width:230px">模型權重</div>
+                <div class="bar mem" style="width:120px">KV cache</div>
+                <div class="bar good" style="width:90px">activation</div>
+              </div>
+            </div>
+            <div class="sub" style="margin-top:10px;color:var(--good)">全部裝得下 ✓ 　所有 block 在晶片內走完</div>
+          </div>
+          <div class="sub clickable pulse" id="toL1" style="padding:10px 16px;border:1px solid var(--good);border-radius:10px;color:var(--good)">▶ 模型長大會怎樣？點這裡（或按 2）</div>
+        </div>
+      </div>
+
+      <!-- L1 裝不下 -->
+      <div class="level" id="L1">
+        <div class="stack">
+          <div class="hd" style="color:var(--warn)">模型長大 → 一顆 HBM 裝不下</div>
+          <div class="gpu big warn">
+            <div class="glabel" style="color:var(--warn)">1 顆 GPU · HBM 上限</div>
+            <div class="barframe overflow">
+              <div class="oflabel">溢出！</div>
+              <div class="bars">
+                <div class="bar comp" style="width:430px">模型權重　70B≈140GB · 175B≈350GB</div>
+                <div class="bar mem" style="width:300px">KV cache　長上下文 × 高併發</div>
+                <div class="bar good" style="width:220px">梯度 + optimizer（訓練）</div>
+              </div>
+            </div>
+            <div class="sub" style="margin-top:10px;color:var(--warn)">三筆帳一起漲 → 超過 80–192 GB</div>
+          </div>
+          <div class="sub clickable pulse" id="toL2" style="padding:10px 16px;border:1px solid var(--good);border-radius:10px;color:var(--good)">▶ 拆到多張卡：先看資料平行（點這裡 / 按 3）</div>
+        </div>
+      </div>
+
+      <!-- L2 資料平行 DP -->
+      <div class="level" id="L2">
+        <div class="stack">
+          <div class="hd" style="color:var(--mem)">資料平行 DP：複製模型、切 batch、同步梯度</div>
+          <div class="rowwrap">
+            <div class="gpu mem"><div class="glabel">GPU 0</div><div class="modelmini"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="shard">batch 1/4</div></div>
+            <div class="gpu mem"><div class="glabel">GPU 1</div><div class="modelmini"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="shard">batch 2/4</div></div>
+            <div class="gpu mem"><div class="glabel">GPU 2</div><div class="modelmini"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="shard">batch 3/4</div></div>
+            <div class="gpu mem"><div class="glabel">GPU 3</div><div class="modelmini"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="shard">batch 4/4</div></div>
+          </div>
+          <div class="collbar allreduce" style="min-width:560px">↕ 每步：梯度 all-reduce（把 4 卡梯度加總、發回）　≈ 2× 參數量 / 步</div>
+          <div class="sub" style="max-width:640px">每張卡都是<b style="color:var(--comp)">整份模型</b>（沒變小）——切的是「資料」不是「模型」。這就是它的四個問題來源。</div>
+        </div>
+      </div>
+
+      <!-- L3 張量平行 TP -->
+      <div class="level" id="L3">
+        <div class="stack" style="gap:12px">
+          <div class="hd" style="color:var(--comp)">張量平行 TP：把「一層之內」的每個矩陣橫切到多卡</div>
+          <!-- 一層是什麼 + 沿寬切 4 片 -->
+          <div class="layerbox" style="max-width:820px">
+            <div class="lb-hd">「一層」= 這些權重矩陣（每個都沿寬切成 4 片，一片一張卡）</div>
+            <div class="lb-sect attn">
+              <span class="lb-lab"><b class="a">Multi-Head Attention</b>　(Wq/Wk/Wv 沿 head 切、Wo 沿寬切)</span>
+              <div class="lb-mats">
+                <div class="wmat"><div class="bar4"><span class="seg0"></span><span class="seg1"></span><span class="seg2"></span><span class="seg3"></span></div><div class="cap">Wq</div></div>
+                <div class="wmat"><div class="bar4"><span class="seg0"></span><span class="seg1"></span><span class="seg2"></span><span class="seg3"></span></div><div class="cap">Wk</div></div>
+                <div class="wmat"><div class="bar4"><span class="seg0"></span><span class="seg1"></span><span class="seg2"></span><span class="seg3"></span></div><div class="cap">Wv</div></div>
+                <div class="wmat"><div class="bar4"><span class="seg0"></span><span class="seg1"></span><span class="seg2"></span><span class="seg3"></span></div><div class="cap">Wo</div></div>
+              </div>
+            </div>
+            <div class="lb-norm">＋ Add & LayerNorm</div>
+            <div class="lb-sect ffn">
+              <span class="lb-lab"><b class="f">FFN</b>　(W1 沿隱藏維切、W2 沿寬切)</span>
+              <div class="lb-mats">
+                <div class="wmat big"><div class="bar4"><span class="seg0"></span><span class="seg1"></span><span class="seg2"></span><span class="seg3"></span></div><div class="cap">W1（d→4d）</div></div>
+                <div class="wmat big"><div class="bar4"><span class="seg0"></span><span class="seg1"></span><span class="seg2"></span><span class="seg3"></span></div><div class="cap">W2（4d→d）</div></div>
+              </div>
+            </div>
+            <div class="lb-norm">＋ Add & LayerNorm</div>
+          </div>
+          <div class="dnarr">↓　同一層，每個矩陣的第 k 片給 GPU k</div>
+          <div class="tp-gpus">
+            <div class="tp-gpu g0"><div class="gl">GPU 0</div><div class="gd">每個矩陣的<br>第 1 直片</div></div>
+            <div class="tp-gpu g1"><div class="gl">GPU 1</div><div class="gd">第 2 直片</div></div>
+            <div class="tp-gpu g2"><div class="gl">GPU 2</div><div class="gd">第 3 直片</div></div>
+            <div class="tp-gpu g3"><div class="gl">GPU 3</div><div class="gd">第 4 直片</div></div>
+          </div>
+          <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;justify-content:center">
+            <div class="collbar heavy">⇄ 每層 all-reduce ×2（把切片的部分和合起來）</div>
+            <span class="badge nvl">必須同一個 NVLink 域（1.8 TB/s）</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- L4 管線平行 PP -->
+      <div class="level" id="L4">
+        <div class="stack" style="gap:14px">
+          <div class="hd" style="color:var(--good)">管線平行 PP：不切一層內部，而是「整層」分段</div>
+          <div class="sub" style="max-width:760px">同樣一個「一層」（上一頁那盒 Wq/Wk/Wv/Wo + W1/W2），PP <b style="color:var(--good)">整盒不動</b>——把整個模型的 N 層切成幾段，一段放一張卡，像流水線。</div>
+          <div class="lstack">
+            <div class="ppstage g0"><div class="pl">GPU 0</div><div class="lyr g0">Layer 1</div><div class="lyr g0">Layer 2</div><div class="lyr g0">Layer 3</div></div>
+            <span class="ppflow">→</span>
+            <div class="ppstage g1"><div class="pl">GPU 1</div><div class="lyr g1">Layer 4</div><div class="lyr g1">Layer 5</div><div class="lyr g1">Layer 6</div></div>
+            <span class="ppflow">→</span>
+            <div class="ppstage g2"><div class="pl">GPU 2</div><div class="lyr g2">Layer 7</div><div class="lyr g2">Layer 8</div><div class="lyr g2">Layer 9</div></div>
+            <span class="ppflow">→</span>
+            <div class="ppstage g3"><div class="pl">GPU 3</div><div class="lyr g3">Layer 10</div><div class="lyr g3">Layer 11</div><div class="lyr g3">Layer 12</div></div>
+          </div>
+          <div style="display:flex;gap:26px;align-items:flex-start;flex-wrap:wrap;justify-content:center">
+            <div class="collbar p2p">只在 stage 邊界傳 activation（p2p、通訊輕）</div>
+            <div class="timeline">
+              <div class="tlrow"><span class="tllab">GPU0</span><span class="tlcell work"></span><span class="tlcell work"></span><span class="tlcell work"></span><span class="tlcell idle"></span></div>
+              <div class="tlrow"><span class="tllab">GPU1</span><span class="tlcell idle"></span><span class="tlcell work"></span><span class="tlcell work"></span><span class="tlcell work"></span></div>
+              <div class="tlrow"><span class="tllab">GPU2</span><span class="tlcell idle"></span><span class="tlcell idle"></span><span class="tlcell work"></span><span class="tlcell work"></span></div>
+              <div class="tlrow"><span class="tllab">時間 →</span><span class="badge bubble" style="margin-left:4px">灰格 = bubble（閒置）</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- L5 互連硬體 -->
+      <div class="level" id="L5">
+        <div class="stack">
+          <div class="hd">通訊走哪條線：scale-up vs scale-out</div>
+          <div class="zones">
+            <div class="zone up">
+              <h3>scale-up（機架內）</h3>
+              <div class="zsub">NVLink / NVSwitch 用「記憶體語意」把多顆綁成一顆大 GPU</div>
+              <div class="zgpus"><span class="zg">G0</span><span class="zg">G1</span><span class="zg">G2</span><span class="zg">G3</span><span class="zg">…</span><span class="zg">G71</span></div>
+              <div class="zline">NVLink 5 · 1.8 TB/s/GPU · 域 72 GPU（GB200 NVL72）</div>
+              <div class="maps">住這裡的平行：<b class="g">TP（每層 all-reduce）</b>、<b class="g">EP（all-to-all）</b><br>加速：NVSwitch + <b class="g">SHARP</b>（把 all-reduce 搬進交換器）</div>
+            </div>
+            <div class="zone out">
+              <h3>scale-out（跨節點）</h3>
+              <div class="zsub">InfiniBand / Spectrum-X 乙太用「訊息語意」（RDMA）串多台節點</div>
+              <div class="zgpus"><span class="zg">節點</span><span class="zg">節點</span><span class="zg">節點</span><span class="zg">…</span></div>
+              <div class="zline">IB NDR/XDR · ~50–100 GB/s/GPU（NVLink 的 1/20+）</div>
+              <div class="maps">住這裡的平行：<b class="c">DP（梯度同步）</b>、<b class="c">PP（p2p）</b><br>直達：<b class="c">GPUDirect RDMA</b>（遠端 NIC 直寫 HBM）· KV：<b class="c">CMX ’26</b></div>
+            </div>
+          </div>
+          <div class="sub" style="max-width:720px">同一套 NCCL 呼叫，底層自動選 NVLink 還是網路、要不要走 SHARP。<b style="color:var(--comp)">通訊密的綁機架內、稀的才跨節點</b>——是被頻寬逼的。</div>
+          <div class="gennote">世代只是把同一張圖的數字放大：<b>NVLink 4</b>（Hopper）900 GB/s → <b>NVLink 5</b>（Blackwell）1.8 TB/s → <b>NVLink 6</b>（Rubin ’26）3.6 TB/s。結構（scale-up 綁 TP/EP、scale-out 綁 DP/PP）不變。</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="panel"></div>
+  </div>
+
+<script>
+let cur = 0;
+
+const LV = [
+  { hash: "one", crumb: "單卡", title: "單卡：一顆 GPU 跑完整個模型", lv: "Level 1 / 6",
+    desc: "一顆 GPU 的 HBM 同時裝下權重、KV cache、activation。所有 block 的資料流都在晶片內走完——這就是第一堂 Part A 的世界。",
+    facts: () => [["模型", "整份放得下"], ["卡間通訊", "無（單卡）"], ["要看什麼", "roofline / 記憶體階層"], ["對應", "Part A（單卡逐 block）"]],
+    teach: () => "<b>教學重點：</b>單卡只要問「compute-bound 還是 memory-bound」。<b>沒有卡間通訊這回事</b>——玩具 Transformer、甚至 7B 這種真實小模型都在這一格。",
+    next: "▶ 模型長大會怎樣？按 2（或點卡片）。" },
+
+  { hash: "oom", crumb: "裝不下", title: "裝不下：三筆帳超過一顆 HBM", lv: "Level 2 / 6",
+    desc: "模型放大到 70B / 175B / 兆級，權重 + KV cache + 訓練狀態一起漲，很快超過一顆 HBM（80–192 GB）。",
+    facts: () => [["70B fp16 權重", "≈ 140 GB"], ["175B 權重", "≈ 350 GB"], ["訓練狀態", "參數量 3–4×"], ["結論", "一顆裝不下"]],
+    teach: () => "<b>教學重點：</b>一旦裝不下，就得把「資料」或「模型」拆到多張卡——而<b>拆法決定卡間要搬什麼</b>。接下來三種平行就是三種拆法。",
+    next: "▶ 最直覺的第一招：資料平行（按 3）。" },
+
+  { hash: "dp", crumb: "資料平行", title: "資料平行 DP：切資料、不切模型", lv: "Level 3 / 6",
+    desc: "每張卡放整份模型、切 batch 各算各的，每步用 all-reduce 對齊梯度。實作最簡單、最成熟。",
+    facts: () => [["切什麼", "資料（batch）"], ["每卡模型", "整份（沒變小）"], ["通訊", "梯度 all-reduce / 每步"], ["搬多少", "≈ 2× 參數量"]],
+    teach: () => "<b>教學重點：</b>DP 切的是<b>資料不是模型</b>，四個問題：① 裝不下的模型救不了 ② all-reduce 隨規模長大 ③ 權重/狀態每卡重複（→ ZeRO/FSDP）④ decode 延遲無解、KV cache 各卡獨立。",
+    next: "▶ 要裝下大模型 → 切模型本身：張量平行（按 4）。" },
+
+  { hash: "tp", crumb: "張量平行", title: "張量平行 TP：把「一層之內」橫切", lv: "Level 4 / 6",
+    desc: "先看「一層」是什麼：一個 Transformer decoder 層 = Multi-Head Attention（Wq/Wk/Wv/Wo 四個矩陣）+ FFN（W1/W2 兩個矩陣）+ 兩個 Add&Norm。TP 把這 6 個大矩陣<b>每一個都沿寬度切成 N 片</b>，一片一張卡。",
+    facts: () => [["「一層」有什麼", "attention 4 矩陣 + FFN 2 矩陣"], ["切什麼", "每個矩陣 → N 直片"], ["每卡持有", "這一層的 1/N"], ["通訊", "每層 all-reduce ×2"], ["落位", "必須 NVLink 域（1.8 TB/s）"]],
+    teach: () => "<b>教學重點：</b>attention 沿 <b>head</b> 切（每張卡算幾個 head）、FFN 沿 <b>隱藏維</b> 切；切完每張卡只有「這一層的一條直片」。因為每層算完要 all-reduce 把部分和合起來、一次 forward 數十~上百次 → <b>通訊最兇，只能待在 NVLink 域</b>。EP（MoE）的 all-to-all 同理住這。",
+    next: "▶ 另一種切法、通訊輕很多：管線平行（按 5）。" },
+
+  { hash: "pp", crumb: "管線平行", title: "管線平行 PP：整層分段成流水線", lv: "Level 5 / 6",
+    desc: "PP 不動「一層」的內部（那盒 Wq/Wk/Wv/Wo + W1/W2 整盒不切），而是把整個模型的 N 層切成幾段——第 1–3 層放 GPU0、第 4–6 層放 GPU1…，像流水線一段接一段。",
+    facts: () => [["切什麼", "層與層之間（整層）"], ["每卡持有", "幾個完整的層"], ["通訊", "p2p 傳 activation"], ["頻寬需求", "中（僅 stage 邊界）"], ["代價", "bubble：頭尾閒置"]],
+    teach: () => "<b>教學重點：</b>TP 切「一層之內的矩陣」、PP 切「層與層之間」——這是兩者最大的差別。PP 通訊輕（只在 stage 邊界 p2p），<b>能容忍較慢的線</b>（可跨節點）；代價是 <b>bubble</b>，要靠切 micro-batch 填滿流水線。",
+    next: "▶ 這些通訊各走哪條線？看互連硬體（按 6）。" },
+
+  { hash: "net", crumb: "互連硬體", title: "互連硬體：scale-up vs scale-out", lv: "Level 6 / 6",
+    desc: "scale-up 用 NVLink / NVSwitch 把機架內 GPU 綁成一個高頻寬域（TP/EP 住這）；scale-out 用 InfiniBand / Spectrum-X 跨節點（DP/PP 住這）。兩層差一個數量級——所以平行策略被「頻寬階梯」決定落位。",
+    facts: () => [["scale-up", "NVLink 5 · 1.8 TB/s/GPU"], ["域大小", "72 GPU（GB200 NVL72）"], ["聚合頻寬", "130 TB/s"], ["scale-out", "IB NDR/XDR · ~50–100 GB/s"]],
+    teach: () => "<b>教學重點：</b>把通訊最兇的 <b>TP / EP 綁 NVLink 域</b>、<b>DP / PP 才跨節點</b>走 IB/Spectrum-X。NVSwitch + <b>SHARP</b> 把 all-reduce 搬進交換器（省頻寬 + 省 SM）；<b>CMX（2026）</b> 把 KV cache 卸到 flash——直接打 decode 的頻寬牆。（世代只是把數字放大，結構不變。）",
+    next: "✅ 最內層。Esc 回上層，切著看六層。" },
+];
+
+const crumbsEl = document.getElementById("crumbs"), panelEl = document.getElementById("panel");
+const txt = (v) => typeof v === "function" ? v() : v;
+const setHash = (f) => { try { history.replaceState(null, "", f); } catch (e) { /* deep-link only; map still works */ } };
+
+function renderCrumbs() {
+  crumbsEl.innerHTML = "";
+  LV.forEach((L, i) => {
+    if (i) { const s = document.createElement("span"); s.className = "sep"; s.textContent = "▸"; crumbsEl.appendChild(s); }
+    const c = document.createElement("span");
+    c.className = "crumb" + (i === cur ? " active" : i > cur ? " future" : "");
+    c.textContent = L.crumb; c.onclick = () => go(i);
+    crumbsEl.appendChild(c);
+  });
+}
+function renderPanel() {
+  const L = LV[cur];
+  panelEl.innerHTML =
+    '<h2><span class="lv">' + txt(L.lv) + '</span>' + txt(L.title) + '</h2>' +
+    '<p class="desc">' + txt(L.desc) + '</p>' +
+    '<table class="facts">' + L.facts().map(([k, v]) => '<tr><td>' + k + '</td><td class="v">' + v + '</td></tr>').join("") + '</table>' +
+    '<div class="teach">' + L.teach() + '</div>' +
+    '<p class="nextstep">' + txt(L.next) + '</p>' +
+    '<p style="color:var(--foot);font-size:11px;margin-top:auto">同一個玩具 Transformer，攤到多張卡。<br>GPU 記憶體與資料搬遷讀書會 · 第二堂課 · 多卡平行地圖</p>';
+}
+function go(i) {
+  if (i < 0 || i >= LV.length || i === cur) return;
+  document.getElementById("L" + cur).classList.remove("show");
+  cur = i;
+  requestAnimationFrame(() => document.getElementById("L" + cur).classList.add("show"));
+  renderCrumbs(); renderPanel();
+  setHash("#" + LV[cur].hash);
+}
+
+document.getElementById("toL1").onclick = () => go(1);
+document.getElementById("toL2").onclick = () => go(2);
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") go(cur - 1);
+  else if (e.key >= "1" && e.key <= "6") go(+e.key - 1);
+});
+
+/* hash: #level */
+const li = LV.findIndex((L) => L.hash === location.hash.replace("#", ""));
+cur = li >= 0 ? li : 0;
+document.getElementById("L" + cur).classList.add("show");
+renderCrumbs(); renderPanel();
+</script>
+</body>
+</html>

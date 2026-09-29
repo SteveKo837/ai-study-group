@@ -1,0 +1,965 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Transformer 互動式地圖 — 玩具級（T=5, d=6, 2 heads）</title>
+<style>
+  :root {
+    --bg: #0E1726; --bg2: #16233A; --bg3: #1C2E4A;
+    --ink: #EAF1FB; --mute: #8FA6C4; --line: #2A3D5C; --foot: #5C7299;
+    --mem: #38BDF8; --comp: #F59E0B; --warn: #FB7185; --good: #34D399;
+    --enc: #A78BFA; --memtint: #10455F; --comptint: #4A3410; --enctint: #2A2150;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font-family: "PingFang TC", "Noto Sans TC", system-ui, sans-serif;
+    overflow: hidden; user-select: none;
+  }
+  .mono { font-family: Menlo, ui-monospace, monospace; }
+
+  #topbar { display: flex; align-items: center; gap: 14px; padding: 11px 22px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  #crumbs { display: flex; align-items: center; gap: 6px; font-size: 13.5px; }
+  .crumb { padding: 4px 11px; border-radius: 8px; cursor: pointer; background: var(--bg2); color: var(--mute); border: 1px solid var(--line); transition: all .15s; }
+  .crumb:hover { color: var(--ink); border-color: var(--mem); }
+  .crumb.active { background: var(--mem); color: var(--bg); font-weight: 700; border-color: var(--mem); }
+  .crumb.future { opacity: .35; pointer-events: none; }
+  .sep { color: var(--foot); }
+
+  #modes { display: flex; gap: 5px; align-items: center; margin-left: 8px; }
+  #modes .lbl { font-size: 12px; color: var(--foot); margin-right: 2px; }
+  #modes .grp { font-size: 10.5px; color: var(--foot); padding: 0 3px; }
+  .modebtn { padding: 4px 12px; border-radius: 999px; cursor: pointer; font-size: 12.5px; background: var(--bg2); color: var(--mute); border: 1px solid var(--line); transition: all .15s; }
+  .modebtn:hover { color: var(--ink); }
+  .modebtn.on.train   { background: var(--comp); color: var(--bg); font-weight: 700; border-color: var(--comp); }
+  .modebtn.on.prefill { background: var(--good); color: var(--bg); font-weight: 700; border-color: var(--good); }
+  .modebtn.on.decode  { background: var(--mem);  color: var(--bg); font-weight: 700; border-color: var(--mem); }
+  #hint { margin-left: auto; color: var(--foot); font-size: 11.5px; }
+  #hint kbd { background: var(--bg3); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; font-family: Menlo, monospace; font-size: 10.5px; color: var(--mute); }
+
+  #stage { display: flex; height: calc(100% - 52px); }
+  #canvas { flex: 1; position: relative; overflow: hidden; }
+  .level { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; opacity: 0; transform: scale(.9); pointer-events: none; transition: opacity .3s ease, transform .3s ease; padding: 18px; }
+  .level.show { opacity: 1; transform: scale(1); pointer-events: auto; }
+
+  #panel { width: 348px; border-left: 1px solid var(--line); padding: 20px; display: flex; flex-direction: column; gap: 13px; overflow-y: auto; }
+  #panel h2 { font-size: 18px; }
+  #panel h2 .lv { color: var(--mem); font-family: Menlo, monospace; font-size: 12px; display: block; margin-bottom: 3px; }
+  #panel p.desc { color: var(--mute); font-size: 13px; line-height: 1.6; }
+  table.facts { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  table.facts td { padding: 6px 8px; border: 1px solid var(--line); }
+  table.facts td:first-child { color: var(--mute); width: 44%; }
+  table.facts td.v { font-family: Menlo, monospace; color: var(--mem); font-weight: 700; }
+  .teach { background: var(--bg2); border-left: 4px solid var(--comp); border-radius: 6px; padding: 11px 13px; font-size: 12.5px; line-height: 1.6; }
+  .teach b { color: var(--comp); }
+  .modetag { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 11.5px; font-weight: 700; }
+  .modetag.train   { background: var(--comptint); color: var(--comp); }
+  .modetag.prefill { background: rgba(52,211,153,.15); color: var(--good); }
+  .modetag.decode  { background: var(--memtint); color: var(--mem); }
+  .modetag.enc { background: var(--enctint); color: var(--enc); }
+  .modetag.dec { background: var(--memtint); color: var(--mem); }
+  .nextstep { color: var(--good); font-size: 12.5px; }
+
+  .clickable { cursor: pointer; transition: filter .15s; }
+  .clickable:hover { filter: brightness(1.35); }
+  .pulse { animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(56,189,248,.45);} 50% { box-shadow: 0 0 0 7px rgba(56,189,248,0);} }
+  .pulse.enc { animation: pulseE 2s infinite; }
+  @keyframes pulseE { 0%,100% { box-shadow: 0 0 0 0 rgba(167,139,250,.45);} 50% { box-shadow: 0 0 0 7px rgba(167,139,250,0);} }
+
+
+  /* ---- matrices ---- */
+  .mat { display: grid; gap: 2px; }
+  .mat i { width: 20px; height: 20px; border-radius: 3px; position: relative; }
+  .mat i.masked { background: var(--bg3) !important; }
+  .mat i.masked::after { content: "✕"; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 10px; color: var(--foot); }
+  .mat i.dimrow { opacity: .14; }
+  .mat i.kv { outline: 1.5px solid var(--mem); outline-offset: -1.5px; }
+  .mat i.fromM { outline: 1.5px solid var(--good); outline-offset: -1.5px; }
+  .matwrap { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+  .matlabel { font-family: Menlo, monospace; font-size: 11px; color: var(--mute); text-align: center; line-height: 1.3; }
+  .matlabel b { color: var(--ink); }
+  .op { font-family: Menlo, monospace; font-size: 19px; color: var(--foot); padding: 0 4px; align-self: center; }
+  .kvbadge { font-size: 10.5px; color: var(--mem); border: 1px solid var(--mem); border-radius: 4px; padding: 1px 6px; display: none; }
+  body.m-decode .kvbadge { display: inline-block; }
+  .mbadge { font-size: 10.5px; color: var(--good); border: 1px solid var(--good); border-radius: 4px; padding: 1px 6px; }
+
+  /* ---- L0 macro encoder<->decoder ---- */
+  .macro { display: flex; align-items: stretch; justify-content: center; gap: 0; }
+  .mcol { display: flex; flex-direction: column; align-items: center; gap: 7px; padding: 0 14px; }
+  .colhdr { font-size: 13px; font-weight: 700; letter-spacing: .5px; }
+  .colhdr.enc { color: var(--enc); }
+  .colhdr.dec { color: var(--mem); }
+  .tokrow { display: flex; gap: 5px; }
+  .tok { width: 30px; height: 30px; border-radius: 7px; background: var(--bg3); border: 1px solid var(--line); display: flex; align-items: center; justify-content: center; font-size: 13px; }
+  .tok.en { font-size: 10.5px; }
+  body.m-decode .deccol .tok:not(.last) { opacity: .28; }
+  body.m-decode .deccol .tok.last { border-color: var(--mem); color: var(--mem); }
+  .varrow { color: var(--foot); font-size: 12.5px; line-height: 1.2; text-align: center; }
+  .blockstack { border: 1.5px solid var(--line); border-radius: 11px; padding: 9px 13px; min-width: 232px; text-align: center; background: var(--bg2); }
+  .blockstack.enc { border-color: var(--enc); }
+  .blockstack.dec { border-color: var(--mem); }
+  .blockstack .bhdr { font-weight: 700; font-size: 13px; margin-bottom: 5px; }
+  .blockstack.enc .bhdr { color: var(--enc); }
+  .blockstack.dec .bhdr { color: var(--mem); }
+  .brow { font-size: 11px; color: var(--mute); padding: 4px 6px; border-radius: 5px; margin: 3px 0; background: var(--bg3); }
+  .brow.mask  { color: var(--mem);  border: 1px solid var(--mem); background: var(--memtint); }
+  .brow.cross { color: var(--good); border: 1px solid var(--good); background: rgba(52,211,153,.12); }
+  .brow.ffn   { color: var(--comp); border: 1px solid var(--comptint); }
+  .bsub { font-size: 10.5px; color: var(--good); margin-top: 5px; }
+  .memout { border: 1.5px solid var(--good); color: var(--good); border-radius: 8px; padding: 6px 14px; font-family: Menlo, monospace; font-size: 12px; }
+  .logits { border: 1.5px dashed var(--mem); color: var(--mem); border-radius: 8px; padding: 6px 14px; font-size: 12px; }
+  /* bridge */
+  .bridge { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px; width: 196px; align-self: center; }
+  .bridgearrow { width: 150px; height: 0; border-top: 3px solid var(--good); position: relative; animation: dashflow 1.4s linear infinite; }
+  .bridgearrow::after { content: ""; position: absolute; right: -2px; top: -6px; border-left: 10px solid var(--good); border-top: 6px solid transparent; border-bottom: 6px solid transparent; }
+  .bridgecap { font-size: 11px; color: var(--mute); text-align: center; line-height: 1.55; }
+  .bridgecap b { color: var(--good); }
+  .bridgemem { border: 1.5px solid var(--good); color: var(--good); border-radius: 8px; padding: 5px 12px; font-family: Menlo, monospace; font-size: 12px; background: rgba(52,211,153,.08); }
+
+  /* ---- L1 block ---- */
+  .flow { display: flex; flex-direction: column; align-items: center; gap: 7px; }
+  .fbox { border: 1.5px solid var(--line); background: var(--bg2); border-radius: 9px; padding: 9px 22px; font-size: 13px; font-weight: 700; text-align: center; min-width: 296px; }
+  .fbox .sub { display: block; font-size: 11px; color: var(--mute); font-weight: 400; margin-top: 2px; }
+  .fbox.attn  { border-color: var(--mem); color: var(--mem); }
+  .fbox.cross { border-color: var(--good); color: var(--good); }
+  .fbox.ffn   { border-color: var(--comp); color: var(--comp); }
+  .fbox.norm  { padding: 4px 22px; font-size: 11px; color: var(--mute); font-weight: 400; min-width: 296px; border-style: dashed; }
+
+  /* ---- L2 attention ---- */
+  .attnlay { display: flex; align-items: center; gap: 14px; }
+  .headbox { border: 1.5px solid var(--line); border-radius: 10px; padding: 10px 14px; background: var(--bg2); text-align: center; }
+  .headbox h5 { font-size: 13px; margin-bottom: 4px; }
+  .headbox .d { font-family: Menlo, monospace; font-size: 10.5px; color: var(--mute); }
+  .headbox.h1 { border-color: var(--mem); }  .headbox.h1 h5 { color: var(--mem); }
+  .headbox.h2 { border-color: var(--comp); } .headbox.h2 h5 { color: var(--comp); }
+  .stackcol { display: flex; flex-direction: column; gap: 12px; }
+  .forklabel { font-size: 11px; color: var(--good); text-align: center; line-height: 1.4; }
+  .qksrc { font-size: 11px; line-height: 1.4; text-align: center; padding: 6px 12px; border-radius: 7px; }
+  .qksrc.selfonly  { color: var(--mem);  background: var(--memtint); }
+  .qksrc.crossonly { color: var(--good); background: rgba(52,211,153,.12); }
+  /* cross-attn：M 的搬遷說明 */
+  .msrc { max-width: 940px; border: 1px solid var(--good); background: rgba(52,211,153,.07); border-radius: 11px; padding: 12px 16px; text-align: center; }
+  .msrc-h { font-size: 13px; color: var(--good); font-weight: 700; margin-bottom: 9px; }
+  .msrc-steps { display: flex; align-items: stretch; justify-content: center; gap: 6px; flex-wrap: wrap; }
+  .mstep { font-size: 11px; color: var(--ink); background: var(--bg2); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; max-width: 250px; line-height: 1.45; display: flex; align-items: center; }
+  .mstep b { color: var(--good); }
+  .marr { color: var(--good); align-self: center; font-family: Menlo, monospace; font-size: 14px; }
+  .msrc-foot { font-size: 11.5px; color: var(--mute); margin-top: 11px; line-height: 1.55; }
+  .msrc-foot b { color: var(--good); }
+
+  /* ---- L3 head ---- */
+  .headlay { display: flex; align-items: center; gap: 8px; }
+
+  /* ---- L4 operator : matmul × L2/HBM ---- */
+  .opwrap { display: flex; flex-direction: column; align-items: center; gap: 14px; width: 100%; }
+  .opheader { font-size: 14px; color: var(--ink); }
+  .opheader b { color: var(--comp); }
+  .opflow { display: flex; align-items: center; gap: 4px; flex-wrap: nowrap; }
+  .memcard { border: 1.5px solid var(--line); border-radius: 11px; padding: 11px 12px; text-align: center; background: var(--bg2); min-width: 120px; }
+  .memcard h4 { font-size: 12.5px; margin-bottom: 7px; line-height: 1.3; }
+  .memcard.hbm  { border-color: var(--mem); }
+  .memcard.l2   { border-color: var(--good); }
+  .memcard.sram { border-color: var(--good); }
+  .memcard.mma  { border-color: var(--comp); }
+  .opmats { display: flex; gap: 8px; justify-content: center; }
+  .opmats .mat i { width: 13px; height: 13px; }
+  .cachebox { border: 1px solid var(--good); border-radius: 6px; padding: 8px 10px; font-size: 11px; color: var(--good); background: rgba(52,211,153,.08); line-height: 1.4; }
+  .cachebox.small { font-size: 10px; }
+  .opnote { font-size: 10px; color: var(--mute); margin-top: 7px; line-height: 1.35; }
+  .opnote.warn { color: var(--warn); }
+  .streamcol { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  .streamarrow { width: 48px; height: 0; border-top: 3px solid var(--mem); position: relative; }
+  .streamarrow::after { content: ""; position: absolute; right: -2px; top: -6px; border-left: 9px solid var(--mem); border-top: 5px solid transparent; border-bottom: 5px solid transparent; }
+  .streamarrow.small { width: 34px; }
+  .streamarrow.warn { border-top-color: var(--warn); animation: dashflow .8s linear infinite; }
+  .streamarrow.warn::after { border-left-color: var(--warn); }
+  .streamcap { font-size: 10px; color: var(--mute); font-family: Menlo, monospace; }
+  @keyframes dashflow { 0%,100% { opacity: .45; } 50% { opacity: 1; } }
+  .tilegrid { display: grid; grid-template-columns: repeat(6, 11px); gap: 1px; justify-content: center; }
+  .tilegrid i { width: 11px; height: 11px; background: var(--memtint); border-radius: 1px; }
+  .tilegrid i.tile { background: var(--comp); }
+  .tcunit { border: 1.5px solid var(--comp); border-radius: 7px; padding: 6px 9px; font-size: 11px; font-weight: 700; color: var(--comp); line-height: 1.3; font-family: Menlo, monospace; }
+  .opback { display: flex; align-items: center; gap: 9px; font-size: 11.5px; color: var(--mute); }
+  .backarrow { display: inline-block; width: 130px; height: 0; border-top: 2px dashed var(--mem); position: relative; }
+  .backarrow::after { content: ""; position: absolute; left: -2px; top: -5px; border-right: 9px solid var(--mem); border-top: 4px solid transparent; border-bottom: 4px solid transparent; }
+  .backarrow.warn { border-top-color: var(--warn); } .backarrow.warn::after { border-right-color: var(--warn); }
+  .strip { font-size: 12px; padding: 9px 16px; border-radius: 8px; background: var(--bg2); border: 1px solid var(--line); color: var(--ink); max-width: 860px; text-align: center; line-height: 1.55; }
+  .strip.warn { border-color: var(--warn); background: rgba(251,113,133,.08); }
+  .strip b { color: var(--warn); }
+  .strip b.g { color: var(--good); }
+
+  /* ---- L5 hardware ---- */
+  #hwtabs { display: flex; gap: 8px; justify-content: center; margin-bottom: 14px; }
+  .hwbtn { padding: 5px 22px; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 700; background: var(--bg2); color: var(--mute); border: 1.5px solid var(--line); }
+  .hwbtn.on.gpu { background: var(--memtint); color: var(--mem); border-color: var(--mem); }
+  .hwbtn.on.tpu { background: var(--comptint); color: var(--comp); border-color: var(--comp); }
+  .hwbtn.on.groq { background: rgba(251,113,133,.15); color: var(--warn); border-color: var(--warn); }
+  .hwview { display: none; }
+  .hwview.show { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+  .hwcard { background: var(--bg2); border: 1.5px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+  .hwcard h4 { font-size: 14px; margin-bottom: 8px; }
+  .hbmbar { width: 220px; height: 124px; border: 1.5px solid var(--mem); border-radius: 9px; padding: 9px; display: flex; flex-direction: column; gap: 6px; }
+  .hbmbar .seg { border-radius: 5px; padding: 4px 8px; font-size: 11px; font-family: Menlo, monospace; }
+  .seg.w  { background: var(--memtint); color: var(--mem); flex: 2; }
+  .seg.kv { background: rgba(52,211,153,.13); color: var(--good); flex: 1.3; border: 1px dashed var(--good); }
+  .seg.act { background: var(--comptint); color: var(--comp); flex: 1; }
+  .hwflow { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; justify-content: center; }
+  .srcard { text-align: center; }
+  .srbox { background: rgba(52,211,153,.1); border: 1px solid var(--good); border-radius: 6px; padding: 6px 12px; font-family: Menlo, monospace; font-size: 12px; color: var(--good); margin-top: 6px; }
+  .srbox.small { font-size: 10.5px; opacity: .8; }
+  .srbox.big { font-size: 14px; padding: 8px 16px; }
+  .tccard { text-align: center; }
+  .mmarow { display: flex; align-items: center; gap: 8px; justify-content: center; margin-top: 6px; }
+  .tcutil { margin-top: 7px; font-size: 12px; }
+  .mmacap { font-size: 10px; color: var(--mute); margin-top: 7px; line-height: 1.4; max-width: 210px; }
+  .sysgrid { display: grid; grid-template-columns: repeat(6, 28px); gap: 4px; }
+  .sysgrid i { width: 28px; height: 28px; border-radius: 4px; background: var(--bg3); border: 1px solid var(--line); display: flex; align-items: center; justify-content: center; font-family: Menlo, monospace; font-size: 10px; color: var(--foot); }
+  .sysgrid i.wave { background: var(--comp); color: var(--bg); border-color: var(--comp); font-weight: 700; }
+  .sysin { display: flex; flex-direction: column; gap: 4px; margin-right: 8px; }
+  .sysin i { width: 22px; height: 28px; border-radius: 4px; background: var(--memtint); border: 1px solid var(--mem); display: flex; align-items: center; justify-content: center; font-size: 10px; color: var(--mem); font-family: Menlo, monospace; }
+  .syscap { font-size: 11px; color: var(--mute); text-align: center; margin-top: 8px; line-height: 1.45; }
+  .bwbig { font-family: Menlo, monospace; font-size: 15px; color: var(--warn); font-weight: 700; margin-top: 8px; text-align: center; line-height: 1.3; }
+  .bwbig-sub { font-size: 10.5px; color: var(--mute); font-weight: 400; }
+  .chiprow { display: flex; gap: 4px; margin-top: 12px; flex-wrap: wrap; max-width: 240px; }
+  .chiprow i { width: 17px; height: 17px; border-radius: 3px; background: var(--bg3); border: 1px solid var(--warn); }
+  .chiprow i.lit { background: var(--warn); }
+  .srnote { font-size: 10.5px; color: var(--mute); margin-top: 10px; line-height: 1.5; text-align: center; }
+  .modetag.gpu { background: var(--memtint); color: var(--mem); }
+  .modetag.tpu { background: var(--comptint); color: var(--comp); }
+  .modetag.groq { background: rgba(251,113,133,.15); color: var(--warn); }
+
+  /* ---- L5 FlashAttention（線上 softmax） ---- */
+  .stack { display: flex; flex-direction: column; align-items: center; }
+  .fsteps { display: flex; gap: 7px; flex-wrap: wrap; justify-content: center; }
+  .fstep-pill { padding: 5px 13px; border-radius: 999px; cursor: pointer; font-size: 12.5px; background: var(--bg2); color: var(--mute); border: 1px solid var(--line); transition: all .15s; white-space: nowrap; }
+  .fstep-pill:hover { color: var(--ink); border-color: var(--good); }
+  .fstep-pill.on { background: var(--good); color: var(--bg); font-weight: 700; border-color: var(--good); }
+  .fbody { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 14px; min-height: 300px; justify-content: center; }
+  /* schematic Q·Kᵀ→S→softmax→·V */
+  .fschem { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center; }
+  .fbox2 { border: 1.5px solid var(--line); border-radius: 8px; padding: 8px 12px; font-family: Menlo, monospace; font-size: 12.5px; text-align: center; background: var(--bg2); color: var(--ink); line-height: 1.4; }
+  .fbox2.s-hbm { border-color: var(--warn); color: var(--warn); background: rgba(251,113,133,.08); }
+  .fbox2.s-sram { border-color: var(--good); color: var(--good); background: rgba(52,211,153,.08); }
+  .fbox2 small { display: block; font-size: 10px; color: var(--mute); margin-top: 3px; }
+  .farr { color: var(--foot); font-family: Menlo, monospace; font-size: 16px; }
+  /* formula card */
+  .fcard { border: 1.5px solid var(--good); border-radius: 12px; background: var(--bg2); padding: 15px 20px; max-width: 900px; }
+  .fcard.blk1 { border-color: var(--mem); }
+  .fcard.blk2 { border-color: var(--comp); }
+  .fla { font-family: "Times New Roman", Georgia, serif; font-size: 21px; color: var(--ink); text-align: center; line-height: 2.0; letter-spacing: .3px; }
+  .fla .op { color: var(--foot); }
+  .fla .mx { color: var(--mem); font-weight: 700; }   /* max d */
+  .fla .sm { color: var(--warn); font-weight: 700; }  /* sum s */
+  .fla .ot { color: var(--good); font-weight: 700; }  /* output o */
+  .fla .rs { color: var(--comp); font-weight: 700; }  /* rescale factor */
+  .fla sub, .fla sup { font-size: 12px; }
+  .fnote { font-size: 12.5px; color: var(--mute); text-align: center; line-height: 1.6; max-width: 860px; }
+  .fnote b.mx { color: var(--mem); } .fnote b.sm { color: var(--warn); } .fnote b.ot { color: var(--good); } .fnote b.rs { color: var(--comp); }
+  .fbadge { display: inline-block; font-size: 11.5px; font-weight: 700; padding: 3px 12px; border-radius: 999px; border: 1.5px solid var(--good); color: var(--good); background: rgba(52,211,153,.08); }
+  .fbig { font-family: Menlo, monospace; font-size: 24px; font-weight: 700; color: var(--good); text-align: center; }
+  .fbig .arrow { color: var(--foot); font-size: 16px; }
+  /* 記憶體大小對比（問題頁） */
+  .memcmp { display: flex; gap: 12px; align-items: center; justify-content: center; flex-wrap: wrap; }
+  .memcol { border: 1.5px solid var(--line); border-radius: 10px; padding: 10px 13px; text-align: center; min-width: 210px; background: var(--bg2); }
+  .memcol.hbm { border-color: var(--mem); } .memcol.sram { border-color: var(--good); }
+  .memcol h5 { font-size: 12.5px; margin-bottom: 8px; font-weight: 700; }
+  .memcol.hbm h5 { color: var(--mem); } .memcol.sram h5 { color: var(--good); }
+  .memchip { border-radius: 5px; padding: 5px 8px; font-family: Menlo, monospace; margin: 4px 0; color: var(--bg); font-weight: 700; }
+  .memchip.w { background: var(--comp); font-size: 11px; } .memchip.kv { background: var(--mem); font-size: 11px; }
+  .memchip.s { background: var(--warn); font-size: 12px; padding: 8px; }
+  .memchip.l2 { background: var(--good); font-size: 10px; } .memchip.sh { background: var(--good); opacity: .8; font-size: 8px; padding: 2px 6px; }
+  .memmid { display: flex; flex-direction: column; align-items: center; color: var(--warn); font-family: Menlo, monospace; font-weight: 700; padding: 0 2px; }
+  .memmid .big { font-size: 24px; } .memmid .cap { font-size: 10px; color: var(--mute); font-weight: 400; max-width: 92px; margin-top: 3px; line-height: 1.35; }
+  /* 分塊找 max 的 reduction chain */
+  .bchain { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+  .brow2 { display: flex; align-items: center; gap: 8px; font-family: "Times New Roman", Georgia, serif; font-size: 17px; color: var(--ink); }
+  .bblk { border: 1.5px solid var(--comp); border-radius: 6px; padding: 3px 9px; font-family: Menlo, monospace; font-size: 10.5px; color: var(--comp); white-space: nowrap; }
+  .bd { color: var(--mem); font-weight: 700; } .bfinal { color: var(--good); font-weight: 700; }
+</style>
+</head>
+<body class="m-train">
+
+<div id="topbar">
+  <div id="crumbs"></div>
+  <div id="modes">
+    <span class="lbl">模式</span>
+    <span class="grp">訓練</span>
+    <span class="modebtn train"   data-m="train">Training</span>
+    <span class="grp">｜推論</span>
+    <span class="modebtn prefill" data-m="prefill">Prefill</span>
+    <span class="modebtn decode"  data-m="decode">Decode</span>
+  </div>
+  <div id="hint">點發亮元件往內切 · <kbd>Esc</kbd> 回上層 · <kbd>1</kbd>–<kbd>7</kbd> 跳層 · <kbd>T</kbd>/<kbd>P</kbd>/<kbd>D</kbd> 切模式 · FlashAttn 層 <kbd>←</kbd><kbd>→</kbd> 步驟</div>
+</div>
+
+<div id="stage">
+  <div id="canvas">
+
+    <!-- L0 : 全景 decoder-only（GPT 這類：逐字生成） -->
+    <div class="level" id="L0">
+      <div class="macro" style="justify-content:center">
+        <div class="mcol deccol">
+          <div class="colhdr dec">DECODER-ONLY　（GPT / Llama / DeepSeek 這類）</div>
+          <div class="tokrow" id="tgtToks"></div>
+          <div class="varrow">↓ token embedding + 位置編碼 → X [5 × 6]</div>
+          <div class="blockstack dec clickable pulse" id="goDecBlock">
+            <div class="bhdr">Decoder block ×N（每層各有獨立權重）</div>
+            <div class="brow mask">masked self-attention（看已生成的自己·擋未來）</div>
+            <div class="brow ffn">FFN（每個 token 獨立）</div>
+            <div class="bsub">每段後接 Add & LayerNorm　·　▶ 點我切開</div>
+          </div>
+          <div class="varrow">↓</div>
+          <div class="logits">logits → 取樣下一個 token</div>
+          <div class="varrow" style="color:var(--good)">↺ 生成的 token 接回輸入，再跑一次（自回歸）</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- L1 : decoder block -->
+    <div class="level" id="L1">
+      <div class="flow">
+        <div class="matwrap"><div class="mat" id="dbX"></div><div class="matlabel">X <b>[5 × 6]</b>（token embedding + 位置）</div></div>
+        <div class="varrow">↓</div>
+        <div class="fbox attn clickable pulse" id="goDecSelf">Masked Self-Attention（2 heads）<span class="sub">看已生成的自己、擋未來 — 點我切開</span></div>
+        <div class="fbox norm">Add（residual）& LayerNorm</div>
+        <div class="varrow">↓</div>
+        <div class="fbox ffn">FFN：6 → 12 → 6<span class="sub">每個 token 獨立過兩層 GEMM（token 軸天然平行）</span></div>
+        <div class="fbox norm">Add（residual）& LayerNorm</div>
+        <div class="varrow">↓ 輸出 [5×6]（疊 N 層）→ logits</div>
+      </div>
+    </div>
+
+    <!-- L2 : attention (multi-head) -->
+    <div class="level" id="L2">
+      <div style="display:flex; flex-direction:column; align-items:center; gap:15px; max-width:1140px">
+      <div class="attnlay">
+        <div class="matwrap"><div class="mat" id="aX"></div><div class="matlabel">X <b>[5×6]</b><br><span class="kvbadge">decode：只有新 token 一列</span></div></div>
+        <div class="op" style="font-size:13px; text-align:center">×Wq<br>×Wk<br>×Wv<br>→</div>
+        <div class="stackcol">
+          <div class="matwrap"><div class="mat" id="aQ"></div><div class="matlabel">Q <b>[5×6]</b>　左半=head1・右半=head2</div></div>
+          <div class="matwrap"><div class="mat" id="aK"></div><div class="matlabel">K <b>[5×6]</b> <span class="kvbadge">KV cache</span></div></div>
+          <div class="matwrap"><div class="mat" id="aV"></div><div class="matlabel">V <b>[5×6]</b> <span class="kvbadge">KV cache</span></div></div>
+        </div>
+        <div class="stackcol" style="align-items:center">
+          <div class="forklabel">↘ 分叉：6 維切成 2 × 3 維<br>（head 軸＝免費的平行軸）</div>
+          <div class="headbox h1 clickable pulse" id="goHead">head 1<br><span class="d">Q₁K₁V₁ [5×3]</span><h5>點我進去看矩陣</h5></div>
+          <div class="headbox h2">head 2<br><span class="d">Q₂K₂V₂ [5×3]</span><h5>（同構，平行算）</h5></div>
+        </div>
+        <div class="op" style="font-size:13px; text-align:center">→ concat<br>[5×6]<br>→ ×Wo →</div>
+        <div class="matwrap"><div class="mat" id="aO"></div><div class="matlabel">輸出 <b>[5×6]</b></div></div>
+      </div>
+      <div class="qksrc selfonly">Q、K、V 都來自<b>同一段 X</b>（自己看自己）· GQA 就是讓多個 Q head 共用一組 K、V</div>
+      </div>
+    </div>
+
+    <!-- L3 : head (matrix stage) -->
+    <div class="level" id="L3">
+      <div class="headlay">
+        <div class="matwrap"><div class="mat" id="hQ"></div><div class="matlabel">Q₁ <b>[5×3]</b></div></div>
+        <div class="op clickable pulse" id="goOp" title="點我看這個 matmul 怎麼搬資料">·</div>
+        <div class="matwrap"><div class="mat" id="hKT"></div><div class="matlabel">K₁ᵀ <b>[3×5]</b> <span class="kvbadge">KV cache←HBM</span></div></div>
+        <div class="op">=</div>
+        <div class="matwrap"><div class="mat" id="hS"></div><div class="matlabel">S <b>[5×5]</b>・causal mask<br><span id="sNote" class="mono" style="font-size:10px;color:var(--foot)"></span></div></div>
+        <div class="op">softmax→</div>
+        <div class="matwrap"><div class="mat" id="hA"></div><div class="matlabel">A <b>[5×5]</b></div></div>
+        <div class="op">·</div>
+        <div class="matwrap"><div class="mat" id="hV"></div><div class="matlabel">V₁ <b>[5×3]</b> <span class="kvbadge">KV cache←HBM</span></div></div>
+        <div class="op">=</div>
+        <div class="matwrap"><div class="mat" id="hO"></div><div class="matlabel">O₁ <b>[5×3]</b></div></div>
+      </div>
+    </div>
+
+    <!-- L4 : operator (one matmul) × L2/HBM data movement -->
+    <div class="level" id="L4">
+      <div class="opwrap">
+        <div class="opheader mono">計算子：<b id="opTitle">S = Q · Kᵀ</b>　— 一個 matmul 在記憶體階層裡怎麼搬</div>
+        <div class="opflow">
+          <!-- HBM -->
+          <div class="memcard hbm">
+            <h4 style="color:var(--mem)">HBM 80GB · 3.35 TB/s<br><span style="font-size:10px;color:var(--mute)">大、慢 — operands 住這</span></h4>
+            <div class="opmats">
+              <div class="matwrap"><div class="mat" id="opQ"></div><div class="matlabel">A=Q</div></div>
+              <div class="matwrap"><div class="mat" id="opKT"></div><div class="matlabel">B=Kᵀ <span class="kvbadge">KV cache</span></div></div>
+            </div>
+            <div class="opnote" id="opHbmNote">整塊矩陣放這裡</div>
+          </div>
+          <div class="streamcol"><div class="streamarrow" id="opArr1"></div><div class="streamcap" id="opArr1c">載 tile</div></div>
+          <!-- L2 -->
+          <div class="memcard l2">
+            <h4 style="color:var(--good)">L2 ~50 MB<br><span style="font-size:10px;color:var(--mute)">晶片內・共享</span></h4>
+            <div class="cachebox" id="opL2box">tile 暫存<br>下次命中免回 HBM</div>
+            <div class="opnote" id="opL2Note">重複用 → 省頻寬</div>
+          </div>
+          <div class="streamcol"><div class="streamarrow small" id="opArr2"></div></div>
+          <!-- shared/registers -->
+          <div class="memcard sram">
+            <h4 style="color:var(--good)">shared/L1 228KB<br><span style="font-size:10px;color:var(--mute)">→ 暫存器</span></h4>
+            <div class="cachebox small">A、B 的 tile<br>→ registers</div>
+          </div>
+          <div class="streamcol"><div class="streamarrow small" id="opArr3"></div></div>
+          <!-- MMA -->
+          <div class="memcard mma">
+            <h4 style="color:var(--comp)">tensor core MMA</h4>
+            <div class="tilegrid" id="opTile"></div>
+            <div class="tcunit" style="margin-top:6px">D += A·B</div>
+            <div class="opnote" id="opMmaNote">tile 餵滿 → 高利用率</div>
+          </div>
+        </div>
+        <!-- writeback -->
+        <div class="opback">
+          <span class="backarrow" id="opBackArr"></span>
+          <span id="opBackCap">結果 S 寫回 HBM</span>
+        </div>
+        <div class="strip" id="opStrip"></div>
+      </div>
+    </div>
+
+    <!-- L5 : FlashAttention（線上 softmax） -->
+    <div class="level" id="L5">
+      <div class="stack" style="gap:13px; max-width:1120px; width:100%">
+        <div class="hd" style="color:var(--good)">FlashAttention：讓 S 不落 HBM 的線上 softmax</div>
+        <div id="fsteps" class="fsteps"></div>
+        <div id="fbody" class="fbody"></div>
+      </div>
+    </div>
+
+    <!-- L6 : hardware -->
+    <div class="level" id="L6">
+      <div style="display:flex; flex-direction:column; align-items:center">
+        <div id="hwtabs">
+          <span class="hwbtn gpu on" data-h="gpu">GPU（NVIDIA）</span>
+          <span class="hwbtn tpu" data-h="tpu">TPU（systolic）</span>
+          <span class="hwbtn groq" data-h="groq">Groq（LPU）</span>
+        </div>
+
+        <!-- GPU -->
+        <div class="hwview gpu show" id="hwGpu">
+          <div class="hwflow">
+            <div class="hwcard">
+              <h4 style="color:var(--mem)">HBM 80 GB · 3.35 TB/s</h4>
+              <div class="hbmbar">
+                <div class="seg w">權重 W</div>
+                <div class="seg kv" id="segKV">KV cache（隨 T → 可達 GB）</div>
+                <div class="seg act">activations</div>
+              </div>
+            </div>
+            <div class="streamcol">
+              <div class="streamarrow" id="streamArr"></div>
+              <div class="streamcap" id="streamCap">串流</div>
+            </div>
+            <div class="hwcard srcard">
+              <h4 style="color:var(--good)">晶片內 SRAM</h4>
+              <div class="srbox">L2 ~50 MB</div>
+              <div class="srbox small">shared/L1 ~228 KB/SM</div>
+            </div>
+            <div class="streamcol"><div class="streamarrow small"></div></div>
+            <div class="hwcard tccard">
+              <h4 style="color:var(--comp)">tensor core（MMA）</h4>
+              <div class="mmarow">
+                <div class="tilegrid" id="tileGrid"></div>
+                <span style="font-family:Menlo;font-size:13px;color:var(--foot)">→</span>
+                <div class="tcunit">MMA<br><span style="font-weight:400;font-size:9px;color:var(--mute)">D = A·B + C</span></div>
+              </div>
+              <div class="tcutil"><span class="util" id="tcUtil" style="font-family:Menlo;font-weight:700">~高</span> <span id="tcNote" style="font-size:10px;color:var(--mute)">大 GEMM 餵得飽</span></div>
+              <div class="mmacap">大 GEMM 切成 tile（真實 16×16）→ 每個 tile 一拍餵進 tensor core</div>
+            </div>
+          </div>
+          <div class="strip" id="gpuStrip"></div>
+        </div>
+
+        <!-- TPU -->
+        <div class="hwview tpu" id="hwTpu">
+          <div class="hwflow">
+            <div class="hwcard">
+              <h4 style="color:var(--comp)">MXU — 脈動陣列（weight-stationary）</h4>
+              <div style="display:flex; align-items:center">
+                <div class="sysin" id="sysIn"></div>
+                <div class="sysgrid" id="sysGrid"></div>
+              </div>
+              <div class="syscap">權重 <b style="color:var(--foot)">w</b> 先載入、釘在格子裡不動；輸入 X 從左邊一拍一拍流進去，<br>部分和往下傳，結果從底部流出——<b style="color:var(--comp)">沒有排程器，資料跟著 clock 齊步走</b>。<br>（真實 TPU：128×128 MAC；這裡 6×6 示意・KV 仍住 HBM）</div>
+            </div>
+            <div class="hwcard" style="max-width:300px">
+              <h4 style="color:var(--ink)">Transformer 在 TPU 上</h4>
+              <div style="font-size:12.5px; line-height:1.7; color:var(--ink)" id="tpuModeText"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Groq -->
+        <div class="hwview groq" id="hwGroq">
+          <div class="hwflow">
+            <div class="hwcard">
+              <h4 style="color:var(--warn)">Groq LPU — 全 SRAM，砍掉 HBM</h4>
+              <div class="srbox big">SRAM ~230 MB / chip</div>
+              <div class="bwbig">~80 TB/s 片上頻寬<br><span class="bwbig-sub">≈ HBM 的 20×+</span></div>
+              <div class="chiprow" id="chipRow"></div>
+              <div class="srnote">單晶片裝不下整個模型 → 權重 + KV 切片<br>散到 幾十～幾百顆 LPU，確定性網路串起來</div>
+            </div>
+            <div class="hwcard" style="max-width:320px">
+              <h4 style="color:var(--ink)">Transformer 在 Groq 上</h4>
+              <div style="font-size:12.5px; line-height:1.7; color:var(--ink)" id="groqModeText"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /canvas -->
+  <div id="panel"></div>
+</div>
+
+<script>
+"use strict";
+const SRC = ["我", "愛", "喝", "咖", "啡"];
+const T = 5, D = 6, HEADS = 2, DH = 3;
+
+/* ---------- matrix builders ---------- */
+const val = (i, j, s) => ((i * 7 + j * 5 + s) % 9) / 9;
+function buildMat(el, rows, cols, colorFn, seed, cell) {
+  const w = cell || 20;
+  el.style.gridTemplateColumns = `repeat(${cols}, ${w}px)`;
+  el.innerHTML = "";
+  for (let i = 0; i < rows; i++) for (let j = 0; j < cols; j++) {
+    const c = document.createElement("i");
+    const v = 0.25 + 0.75 * val(i, j, seed);
+    c.style.background = colorFn(i, j, v);
+    c.dataset.r = i; c.dataset.c = j;
+    el.appendChild(c);
+  }
+}
+const cyan  = (a) => `rgba(56,189,248,${a})`;
+const amber = (a) => `rgba(245,158,11,${a})`;
+const green = (a) => `rgba(52,211,153,${a})`;
+const halfColor = (i, j, v) => (j < DH ? cyan(v) : amber(v));
+
+document.getElementById("tgtToks").innerHTML =
+  SRC.map((t, i) => `<span class="tok ${i === T - 1 ? "last" : ""}">${t}</span>`).join("");
+
+buildMat(document.getElementById("dbX"), T, D, (i, j, v) => cyan(v), 1);
+
+buildMat(document.getElementById("aX"), T, D, (i, j, v) => cyan(v), 2);
+["aQ", "aK", "aV"].forEach((id, k) => buildMat(document.getElementById(id), T, D, halfColor, 3 + k));
+buildMat(document.getElementById("aO"), T, D, (i, j, v) => green(v), 6);
+
+buildMat(document.getElementById("hQ"), T, DH, (i, j, v) => cyan(v), 7);
+buildMat(document.getElementById("hKT"), DH, T, (i, j, v) => cyan(v * .9), 8);
+buildMat(document.getElementById("hS"), T, T, (i, j, v) => amber(v), 9);
+buildMat(document.getElementById("hA"), T, T, (i, j, v) => amber(v), 10);
+buildMat(document.getElementById("hV"), T, DH, (i, j, v) => cyan(v * .9), 11);
+buildMat(document.getElementById("hO"), T, DH, (i, j, v) => green(v), 12);
+
+buildMat(document.getElementById("opQ"), T, DH, (i, j, v) => cyan(v), 7, 13);
+buildMat(document.getElementById("opKT"), DH, T, (i, j, v) => cyan(v * .9), 8, 13);
+
+/* ---------- state ---------- */
+let mode = "train";       // train | prefill | decode
+let hw = "gpu";           // gpu | tpu | groq
+let fstep = 0;            // FlashAttention 步驟 0..4
+
+const KV_MATS = ["aK", "aV", "hKT", "hV"];
+const ROW_MATS = ["aX", "aQ", "hQ", "hS", "hA", "hO", "aO"];
+
+function applyMode() {
+  document.body.className = `m-${mode}`;
+  document.querySelectorAll(".modebtn").forEach((b) => b.classList.toggle("on", b.dataset.m === mode));
+
+  const decRows = (mode === "decode");      // decode 時逐列：只算最後一列
+
+  ["hS", "hA"].forEach((id) => {
+    document.getElementById(id).querySelectorAll("i").forEach((c) => {
+      const i = +c.dataset.r, j = +c.dataset.c;
+      c.classList.toggle("masked", mode !== "decode" && j > i);   // causal mask：擋未來
+      c.classList.toggle("dimrow", decRows && i < T - 1);
+    });
+  });
+  ROW_MATS.filter((id) => !["hS", "hA"].includes(id)).forEach((id) => {
+    document.getElementById(id).querySelectorAll("i").forEach((c) => {
+      c.classList.toggle("dimrow", decRows && +c.dataset.r < T - 1);
+    });
+  });
+  // KV-cache 外框：decode 時 K、V 來自 HBM 的自回歸 KV cache
+  const kvOn = (mode === "decode");
+  KV_MATS.forEach((id) => {
+    document.getElementById(id).querySelectorAll("i").forEach((c) => c.classList.toggle("kv", kvOn));
+  });
+
+  document.getElementById("sNote").textContent =
+    decRows ? "decode：q[1×3]·Kᵀ[3×5] = s[1×5]（GEMV）" : "整批 5 列一次算（GEMM）";
+
+  // ----- L4 operator view -----
+  applyOp();
+
+  // ----- L5 GPU view -----
+  const dec = decRows;
+  document.getElementById("streamArr").classList.toggle("warn", dec);
+  document.getElementById("streamCap").textContent = dec ? "每步重串流" : "串流·重複用";
+  document.getElementById("tcUtil").textContent = dec ? "<5%" : "~高";
+  document.getElementById("tcUtil").style.color = dec ? "var(--warn)" : "var(--good)";
+  document.getElementById("tcNote").textContent = dec ? "GEMV 餵不滿（剩一條 tile）" : "大 GEMM 餵得飽（滿 tile）";
+  document.getElementById("segKV").style.display = mode === "train" ? "none" : "block";
+  const stripTxt = {
+    train:   "整批大 GEMM：權重從 HBM 串流進 SRAM、在晶片內重複用 → compute-bound（activations 大但留在 HBM）。",
+    prefill: "整段 prompt 一次算完，把 K、V 寫進 HBM 的 KV cache。",
+    decode:  "KV cache 可達 <b>GB</b>　≫　L2 ~50 MB　≫　shared ~228 KB／SM　→　<b>放不進晶片</b> → 每個 token 把 權重+KV 從 HBM 重新串流進 SRAM、算完即丟 → <b>HBM 頻寬＝速度天花板</b>。",
+  };
+  const strip = document.getElementById("gpuStrip");
+  strip.innerHTML = stripTxt[mode];
+  strip.classList.toggle("warn", dec);
+
+  const tpuText = {
+    train:   "整批大 GEMM 流過 MXU，利用率高——systolic array 的甜蜜點。backward 也是 GEMM。XLA 先把整個計算圖排好。",
+    prefill: "和訓練 forward 一樣：整段 prompt 攤成大矩陣流過 MXU，一次算完並寫入 KV cache。",
+    decode:  "一次 1 個 token：小 GEMV 流過 128×128 陣列，大部分 MAC 空轉——TPU 一樣 memory-bound；KV 也住 HBM。",
+  };
+  document.getElementById("tpuModeText").textContent = tpuText[mode];
+  const groqText = {
+    train:   "Groq 是推論專用晶片，不做訓練——訓練看 GPU / TPU。",
+    prefill: "整段 prompt 流過確定性管線；權重、KV 都在片上 SRAM，全程不碰 HBM。",
+    decode:  "直接解掉 GPU 痛點：每 token 要重讀的 權重+KV 都在 80 TB/s 的 SRAM（不是 3 TB/s HBM）→ 一樣 memory-bound，但「記憶體」快 20×+ → token/s 大幅領先。代價：一顆只有 230 MB，要很多顆切片裝模型。",
+  };
+  document.getElementById("groqModeText").textContent = groqText[mode];
+  renderPanel();
+}
+
+function applyOp() {
+  const dec = (mode === "decode");
+  document.getElementById("opTitle").innerHTML = "S = Q · Kᵀ";
+  // operand 矩陣：decode 時 Q 只剩一列
+  document.getElementById("opQ").querySelectorAll("i").forEach((c) =>
+    c.classList.toggle("dimrow", dec && +c.dataset.r < T - 1));
+  // 箭頭顏色
+  ["opArr1", "opArr2", "opArr3"].forEach((id) => document.getElementById(id).classList.toggle("warn", dec));
+  document.getElementById("opBackArr").classList.toggle("warn", dec);
+  document.getElementById("opArr1c").textContent = dec ? "每步重載" : "載 tile";
+
+  const hbmNote = {
+    train:   "Q、Kᵀ 整塊都在 HBM",
+    prefill: "整段 prompt 的 Q、K、V 都在 HBM",
+    decode:  "KV cache 在 HBM，且 ≫ L2 → 留不住",
+  };
+  document.getElementById("opHbmNote").textContent = hbmNote[mode];
+  document.getElementById("opHbmNote").classList.toggle("warn", dec);
+
+  const l2box = document.getElementById("opL2box");
+  const l2note = document.getElementById("opL2Note");
+  if (dec) {
+    l2box.innerHTML = "KV ≫ 50MB<br>裝不下 → miss";
+    l2box.style.borderColor = "var(--warn)"; l2box.style.color = "var(--warn)"; l2box.style.background = "rgba(251,113,133,.1)";
+    l2note.textContent = "L2 miss → 每步回 HBM"; l2note.classList.add("warn");
+  } else {
+    l2box.innerHTML = "tile 暫存<br>下次命中免回 HBM";
+    l2box.style.borderColor = "var(--good)"; l2box.style.color = "var(--good)"; l2box.style.background = "rgba(52,211,153,.08)";
+    l2note.textContent = "重複用 → 省頻寬"; l2note.classList.remove("warn");
+  }
+
+  const mmaNote = document.getElementById("opMmaNote");
+  mmaNote.textContent = dec ? "GEMV：tile 餵不滿（<5%）" : "tile 餵滿 → 高利用率";
+  mmaNote.classList.toggle("warn", dec);
+
+  const back = document.getElementById("opBackCap");
+  back.innerHTML = mode === "train"
+    ? "結果 S 寫回 HBM —— 還要 <b style='color:var(--comp)'>留給 backward</b>（容量壓力）"
+    : mode === "prefill"
+    ? "結果寫回 HBM；K、V 存入 KV cache"
+    : "每步：S=[1×5] 算完即丟，下一步又得回 HBM 重載 KV";
+
+  const opStripTxt = {
+    train:   "訓練：T 夠大 → 大 GEMM，operand tile 在 L2/SRAM <b class='g'>重複用</b>，算術強度高 → <b class='g'>compute-bound</b>。但 S、A 要寫回 HBM 並<b class='g'>留到 backward</b> → 容量壓力。",
+    prefill: "Prefill：整段 prompt 一次算 → 大 GEMM，L2 命中率高、tensor core 餵得飽；順手把 K、V 寫進 HBM 的 KV cache。",
+    decode:  "Decode：Q 只剩 <b>一列</b> → GEMV，operand <b>用一次就丟、零重複</b>；KV cache <b>比 L2 大太多</b>，每步都得從 HBM 重新搬 → <b>L2↔HBM 流量＝瓶頸</b>，tensor core 空轉。",
+  };
+  const s = document.getElementById("opStrip");
+  s.innerHTML = opStripTxt[mode];
+  s.classList.toggle("warn", dec);
+}
+
+document.querySelectorAll(".modebtn").forEach((b) => (b.onclick = () => { mode = b.dataset.m; applyMode(); }));
+
+/* ---------- hw toggle ---------- */
+function applyHw() {
+  document.querySelectorAll(".hwbtn").forEach((b) => b.classList.toggle("on", b.dataset.h === hw));
+  document.getElementById("hwGpu").classList.toggle("show", hw === "gpu");
+  document.getElementById("hwTpu").classList.toggle("show", hw === "tpu");
+  document.getElementById("hwGroq").classList.toggle("show", hw === "groq");
+  renderPanel();
+}
+document.querySelectorAll(".hwbtn").forEach((b) => (b.onclick = () => { hw = b.dataset.h; applyHw(); }));
+
+/* ---------- animations ---------- */
+const sysGrid = document.getElementById("sysGrid");
+for (let i = 0; i < 36; i++) { const c = document.createElement("i"); c.textContent = "w"; sysGrid.appendChild(c); }
+const sysIn = document.getElementById("sysIn");
+for (let i = 0; i < 6; i++) { const c = document.createElement("i"); c.textContent = "x" + i; sysIn.appendChild(c); }
+let stick = 0;
+setInterval(() => {
+  stick = (stick + 1) % 14;
+  sysGrid.querySelectorAll("i").forEach((c, idx) => {
+    const r = Math.floor(idx / 6), col = idx % 6;
+    c.classList.toggle("wave", r + col === stick);
+  });
+}, 360);
+
+const tileGrid = document.getElementById("tileGrid");
+for (let i = 0; i < 36; i++) tileGrid.appendChild(document.createElement("i"));
+const opTile = document.getElementById("opTile");
+for (let i = 0; i < 36; i++) opTile.appendChild(document.createElement("i"));
+let ttick = 0;
+const TPOS = [[0,0],[0,2],[0,4],[2,0],[2,2],[2,4],[4,0],[4,2],[4,4]];
+setInterval(() => {
+  ttick = (ttick + 1) % TPOS.length;
+  const [tr, tc] = TPOS[ttick];
+  tileGrid.querySelectorAll("i").forEach((c, idx) => {
+    const r = Math.floor(idx / 6), col = idx % 6;
+    c.classList.toggle("tile", r >= tr && r < tr + 2 && col >= tc && col < tc + 2);
+  });
+  // operator tile：decode 只掃一條（GEMV），其他模式掃整塊
+  const dec = (mode === "decode");
+  opTile.querySelectorAll("i").forEach((c, idx) => {
+    const r = Math.floor(idx / 6), col = idx % 6;
+    if (dec) c.classList.toggle("tile", r === 5 && col === (ttick % 6));
+    else c.classList.toggle("tile", r >= tr && r < tr + 2 && col >= tc && col < tc + 2);
+  });
+}, 420);
+
+const chipRow = document.getElementById("chipRow");
+for (let i = 0; i < 24; i++) chipRow.appendChild(document.createElement("i"));
+let gtick = 0;
+setInterval(() => {
+  gtick = (gtick + 1) % 27;
+  chipRow.querySelectorAll("i").forEach((c, idx) => c.classList.toggle("lit", idx >= gtick - 2 && idx <= gtick));
+}, 280);
+
+/* ---------- FlashAttention 步驟（線上 softmax） ---------- */
+const FSTEPS = [
+  { label: "0 問題·大小",
+    desc: "attention 要算 S = Q·Kᵀ [T×T] → softmax → ·V。S 比晶片內 SRAM 大太多，只能落 HBM、反覆進出。",
+    facts: [["attention 做什麼", "QKᵀ → softmax → ·V"], ["S 大小", "T×T（T=8192 ≈ 134 MB/head）"], ["晶片內 SRAM", "L2 ~50 MB / shared ~228 KB"], ["判定", "S ≫ SRAM → 落 HBM → memory-bound"]],
+    teach: "<b>教學重點：</b>attention 的中間量 <b>S = QKᵀ 是 T×T</b>（T=8192 時單 head ≈ 134 MB），比晶片內 shared（228 KB）大 <b>~600×</b> → 放不進晶片、只能寫進 HBM，softmax 時再反覆讀回 → memory-bound。FlashAttention 的目標：<b>讓 S 從不完整落地 HBM</b>。",
+    body:
+      '<div class="fschem">' +
+        '<div class="fbox2">Q · Kᵀ</div><span class="farr">→</span>' +
+        '<div class="fbox2 s-hbm">S = [T×T]</div><span class="farr">→</span>' +
+        '<div class="fbox2">softmax</div><span class="farr">→</span>' +
+        '<div class="fbox2">· V</div><span class="farr">→</span>' +
+        '<div class="fbox2">o</div>' +
+      '</div>' +
+      '<div class="memcmp">' +
+        '<div class="memcol hbm"><h5>HBM（大、慢，~3.35 TB/s）</h5>' +
+          '<div class="memchip w">權重 W</div><div class="memchip kv">KV cache</div><div class="memchip s">S = T×T ≈ 134 MB</div></div>' +
+        '<div class="memmid"><span class="big">≫</span><span class="cap">S 比 shared 大 ~600×</span></div>' +
+        '<div class="memcol sram"><h5>晶片內 SRAM（小、快）</h5>' +
+          '<div class="memchip l2">L2 ~50 MB</div><div class="memchip sh">shared ~228 KB/SM</div>' +
+          '<div style="font-size:10px;color:var(--warn);margin-top:6px">放不下整個 S</div></div>' +
+      '</div>' +
+      '<div class="fnote">S 一大塊（134 MB）只能住 <b class="mx">HBM</b>；softmax 又要對整排算 → S 反覆在 <b>HBM↔SRAM</b> 之間進出 → <b>memory-bound</b>。這就是要打掉的瓶頸。</div>' },
+
+  { label: "1 safe softmax",
+    desc: "softmax 先減全域最大 a_max 防溢位：â_i = e^(a_i−a_max) / Σ e^(a_i−a_max)。但要先知道 a_max。",
+    facts: [["公式", "â_i = e^(a_i−a_max) / Σ"], ["a_max", "= max_i a_i（全域最大）"], ["天真做法", "先算完整個 S 才知 a_max"], ["FlashAttn", "改成分塊、線上找"]],
+    teach: "<b>教學重點：</b>softmax 要減<b class=\"mx\">全域最大 a_max</b> 防止 e<sup>大數</sup> 溢位。問題：要先知道 <b class=\"mx\">a_max</b> 和分母 <b class=\"sm\">Σ</b>——天真做法得先把整排 a（＝整個 S）算完才知道。FlashAttention 的招：把 K/V <b>切塊</b>，邊掃邊更新 max、sum、output。",
+    body:
+      '<div class="fcard"><div class="fla">â<sub>i</sub> <span class="op">=</span> e<sup>a<sub>i</sub> − <span class="mx">a<sub>max</sub></span></sup> <span class="op">/</span> <span class="sm">Σ<sub>i=1</sub><sup>L</sup> e<sup>a<sub>i</sub> − <span class="mx">a<sub>max</sub></span></sup></span>　，　<span class="mx">a<sub>max</sub></span> <span class="op">=</span> max<sub>i</sub> a<sub>i</sub></div></div>' +
+      '<div class="fnote">減<b class="mx">全域最大 a_max</b> 防溢位（數學不變）。但要先知道 <b class="mx">a_max</b> 和分母 <b class="sm">Σ</b> → 天真做法得先把整個 S 算出來落地。<br>下三步：<b>分塊</b>把 a_max（步驟2）、分母 Σ（步驟3）、輸出 o（步驟4）<b>一次掃完，S 不落地</b>。</div>' },
+
+  { label: "2 分塊找 max",
+    desc: "把 L 個 key 切成 B = L/N 塊。每塊算局部 max，和前面的 running max 取 max：d_k = max(第k塊, d_{k−1})，掃到 d_B = a_max。",
+    facts: [["切塊", "B = L/N，每塊 N 個"], ["d₁", "max(第 1 塊)"], ["d_k", "max(第 k 塊, d_{k−1})"], ["d_B", "= a_max（全域最大）"]],
+    teach: "<b>教學重點（max 的縮減 reduction）：</b>先用<b>分塊 reduction</b> 把 a_max 找出來——每塊算局部最大、再和前面的 <b class=\"mx\">running max d</b> 取 max，一塊一塊往下傳，掃到最後一塊 <b class=\"mx\">d_B</b> 就是全域 <b>a_max</b>。<b>不必存整排 a，只留一個 running max。</b>",
+    body:
+      '<div class="fschem"><div class="fbox2">把 L 個 key 切成 B = L/N 塊<small>一塊 N 個，只在 SRAM</small></div></div>' +
+      '<div class="fcard blk1"><div class="bchain">' +
+        '<div class="brow2"><span class="bblk">Block 1</span> → <span class="bd">d₁</span> = max( a₁ … a_N )</div>' +
+        '<div class="brow2"><span class="bblk">Block 2</span> → <span class="bd">d₂</span> = max( a<sub>N+1</sub> … a<sub>2N</sub> , <span class="bd">d₁</span> )</div>' +
+        '<div class="brow2" style="color:var(--foot);font-family:Menlo">　　　⋮</div>' +
+        '<div class="brow2"><span class="bblk">Block B</span> → <span class="bd">d_B</span> = max( a<sub>L−N+1</sub> … a_L , <span class="bd">d<sub>B−1</sub></span> ) = <span class="bfinal">a_max ✓</span></div>' +
+      '</div></div>' +
+      '<div class="fnote">每塊的局部最大和前面的 <b class="mx">running max</b> 取 max，往下傳；掃到最後一塊 <b class="mx">d_B</b> 就是全域 <b>a_max</b>——這就是「找 a_max」的分塊 <b>reduction</b>，過程<b>只留一個 max、不存整排 a</b>。</div>' },
+
+  { label: "3 分塊找 Σ",
+    desc: "邊找 max 邊累加分母。s_1 是「假設 d_1 是最大」算的；遇到更大的 d_2，舊 s_1 要乘 e^(d_1−d_2) 校正，再加新塊。",
+    facts: [["s₁", "Σ_{1..N} e^(a_i−d₁)"], ["校正", "舊 s × e^(d_{k−1}−d_k)"], ["s_k", "s_{k−1}·e^(…) + Σ e^(a_i−d_k)"], ["s_B", "= Σ e^(a_i−a_max)（正確分母）"]],
+    teach: "<b>教學重點：</b><b class=\"sm\">s₁</b> 是「假設 d₁ 是最大」算的；第二塊發現更大的 <b class=\"mx\">d₂</b> 時，舊的 <b class=\"sm\">s₁</b> 要乘 <b class=\"rs\">e^(d₁−d₂)</b> 把指數基準校正過來，再加新塊。掃完 <b class=\"sm\">s_B</b> 就是正確分母 Σ e^(a_i−a_max)——<b>max 和分母在同一次分塊掃描裡一起算好</b>。",
+    body:
+      '<div class="fcard blk1"><div class="fla">' +
+        '<span class="sm">s₁</span> <span class="op">=</span> Σ<sub>i=1</sub><sup>N</sup> e<sup>a<sub>i</sub> − <span class="mx">d₁</span></sup>　<span style="font-size:13px;color:var(--foot)">（假設 d₁ 是最大）</span><br>' +
+        '<span class="sm">s₂</span> <span class="op">=</span> <span class="sm">s₁</span>·<span class="rs">e<sup><span class="mx">d₁</span>−<span class="mx">d₂</span></sup></span> <span class="op">+</span> Σ<sub>i=N+1</sub><sup>2N</sup> e<sup>a<sub>i</sub> − <span class="mx">d₂</span></sup><br>' +
+        '<span style="font-size:15px;color:var(--foot)">一般：</span> <span class="sm">s_k</span> <span class="op">=</span> <span class="sm">s<sub>k−1</sub></span>·<span class="rs">e<sup><span class="mx">d<sub>k−1</sub></span>−<span class="mx">d_k</span></sup></span> <span class="op">+</span> Σ<sub>i=kN+1</sub><sup>(k+1)N</sup> e<sup>a<sub>i</sub> − <span class="mx">d_k</span></sup>' +
+      '</div></div>' +
+      '<div class="fnote">分母也分塊累加：舊的 <b class="sm">s</b> 一旦碰到更大的 max，就乘 <b class="rs">e^(d_{k−1}−d_k)</b> 校正指數基準，再加這塊。掃完 <b class="sm">s_B</b> = 正確的 Σ e^(a_i−a_max)。</div>' },
+
+  { label: "4 分塊算 o",
+    desc: "輸出同理：舊 o_{k−1} 用 (s_{k−1}/s_k)·e^(d_{k−1}−d_k) 校正，再加這塊的加權 v。keys 從左、values 從右進，逐塊累積。",
+    facts: [["o₁", "Σ (e^(a_i−d₁)/s₁) v_i"], ["校正", "舊 o × (s_{k−1}/s_k)·e^(…)"], ["o_k", "o_{k−1}·校正 + Σ(e^(a_i−d_k)/s_k) v_i"], ["o_B", "= Σ â_i v_i（正確輸出）"]],
+    teach: "<b>教學重點：</b>output 同理：舊 <b class=\"ot\">o<sub>k−1</sub></b> 用 <b class=\"rs\">(s<sub>k−1</sub>/s_k)·e^(d<sub>k−1</sub>−d_k)</b> 校正（換新分母、換新 max 基準），再加這塊的加權 v。keys <b class=\"mx\">k</b> 從左、values <b class=\"mx\">v</b> 從右餵進，逐塊累積；掃到 <b class=\"ot\">o_B</b> 就是正確輸出 Σ â_i v_i。",
+    body:
+      '<div class="fschem"><span class="fbox2" style="border-color:var(--comp);color:var(--comp)">k ← keys</span><span class="farr">→</span><span class="fbox2 s-sram">第 k 塊在 SRAM 算</span><span class="farr">←</span><span class="fbox2" style="border-color:var(--mem);color:var(--mem)">v ← values</span></div>' +
+      '<div class="fcard blk2"><div class="fla">' +
+        '<span class="ot">o₁</span> <span class="op">=</span> Σ<sub>i=1</sub><sup>N</sup> ( e<sup>a<sub>i</sub>−<span class="mx">d₁</span></sup> <span class="op">/</span> <span class="sm">s₁</span> ) v<sub>i</sub><br>' +
+        '<span class="ot">o₂</span> <span class="op">=</span> <span class="ot">o₁</span>·( <span class="sm">s₁</span>/<span class="sm">s₂</span> )·<span class="rs">e<sup><span class="mx">d₁</span>−<span class="mx">d₂</span></sup></span> <span class="op">+</span> Σ<sub>i=N+1</sub><sup>2N</sup> ( e<sup>a<sub>i</sub>−<span class="mx">d₂</span></sup>/<span class="sm">s₂</span> ) v<sub>i</sub><br>' +
+        '<span style="font-size:15px;color:var(--foot)">一般：</span> <span class="ot">o_k</span> <span class="op">=</span> <span class="ot">o<sub>k−1</sub></span>·( <span class="sm">s<sub>k−1</sub></span>/<span class="sm">s_k</span> )·<span class="rs">e<sup><span class="mx">d<sub>k−1</sub></span>−<span class="mx">d_k</span></sup></span> <span class="op">+</span> Σ ( e<sup>a<sub>i</sub>−<span class="mx">d_k</span></sup>/<span class="sm">s_k</span> ) v<sub>i</sub>' +
+      '</div></div>' +
+      '<div class="fnote">輸出也逐塊累積：舊 <b class="ot">o</b> 乘 <b class="rs">(s_{k−1}/s_k)·e^(d_{k−1}−d_k)</b> 校正，再加這塊的加權 v。掃到最後 <b class="ot">o_B</b> = 正確的 Σ â_i v_i。</div>' },
+
+  { label: "5 取代整個 S",
+    desc: "分塊遞迴一次掃完，同時得到 a_max、分母 Σ、輸出 o——用線上遞迴取代「先算完整個 S 再 softmax」，S 從不落地 HBM。",
+    facts: [["取代", "整個 S[T×T] 的計算 + 落地"], ["HBM 讀寫", "O(T²) → O(T)"], ["記憶體", "O(T²) → O(T)"], ["實測", "快 2–4×（exact）"]],
+    teach: "<b>教學重點：</b>把步驟 2/3/4 合成一次分塊掃描：<b>同時</b>算出 a_max、分母 <b class=\"sm\">Σ</b>、輸出 <b class=\"ot\">o</b>——用「一塊一塊的線上遞迴」<b>取代「先算完整個 S[T×T] 再 softmax」</b>。整個 S 從沒完整算出、也沒落地 HBM；反向傳播<b>重算 S、不存</b>（省容量）。這就是第一堂 Part 5 的 FlashAttention；和 GQA/MLA（省 KV）、DSA（只讀選中 KV）一樣都在減 HBM 流量。",
+    body:
+      '<div class="fschem">' +
+        '<div class="fbox2 s-sram">一塊一塊掃過 K/V<small>S 從不完整算出、不落 HBM</small></div><span class="farr">→</span>' +
+        '<div class="fbox2 s-sram">同時得到 a_max、<span class="sm">Σ</span>、<span class="ot">o</span></div>' +
+      '</div>' +
+      '<div class="fbig">整個 S[T×T] 的計算 <span class="arrow">被取代</span>　·　HBM O(T²) <span class="arrow">→</span> O(T)　·　<span style="color:var(--comp)">快 2–4×</span></div>' +
+      '<div class="fnote">分塊遞迴<b>一次掃完</b>就同時得到全域 max、分母 <b class="sm">Σ</b>、輸出 <b class="ot">o</b>——<b>取代了「先算完整個 S 再 softmax」</b>。整個 T×T 的 S 從沒完整落地 HBM，反向再重算即可。</div>' +
+      '<div><span class="fbadge">數學完全等價（exact）· 只是把 S 留在晶片內</span></div>' },
+];
+
+/* ---------- levels / panel ---------- */
+const LV = [
+  { id: "L0", hash: "io", crumb: "全景", title: "Decoder-only：逐字生成的自回歸迴圈", lv: "Level 1 / 7",
+    desc: "最宏觀：現代 LLM（GPT / Llama / DeepSeek）只留 decoder。token 過 embedding + 位置編碼 → 疊 N 層 decoder block → logits → 取樣下一個字，再接回輸入重跑（自回歸）。",
+    facts: (m) => [["架構", "decoder-only（無 encoder）"], ["注意力", "masked self-attn（擋未來）"], ["每層", "self-attn + FFN + Add&Norm"],
+      (m === "decode") ? ["生成方式", "一次一 token、自回歸"] : ["此模式", m === "train" ? "整批 teacher forcing" : "整段 prompt 一次編碼"]],
+    teach: (m) => "<b>教學重點：</b>decoder-only 只有一種 block：masked self-attention（看已生成的自己、擋未來）+ FFN，疊 N 層。<b>沒有 encoder、沒有 cross-attention。</b>prefill 先把整段 prompt 一次算完（compute-bound），decode 再逐字吐、每步接回輸入（memory-bound）。",
+    next: () => "▶ 點 Decoder block 切開看內部。" },
+
+  { id: "L1", hash: "block", crumb: "Block", title: "Decoder block：masked self-attn + FFN", lv: "Level 2 / 7",
+    desc: "一層 decoder block 兩段：masked self-attention（看自己、擋未來）→ FFN。每段後接殘差（residual）+ LayerNorm。疊 N 層，每層各有獨立權重。",
+    facts: () => [["注意力", "masked self（causal）"], ["FFN", "6 → 12 → 6"], ["殘差 / Norm", "每段後都有"], ["疊幾層", "N（各層獨立權重）"]],
+    teach: () => "<b>教學重點：</b>attention 是 token 之間唯一交換資訊的地方；FFN 對每個 token 獨立（token 軸天然平行）。causal mask 讓位置 i 只能看 ≤ i——這就是自回歸生成的根據。多卡時：層內切＝張量平行，層間切＝管線平行。",
+    next: () => "▶ 點 Self-Attention 切開看多頭。" },
+
+  { id: "L2", hash: "attn", crumb: "Attention", title: "Multi-Head Self：分叉就是平行軸", lv: "Level 3 / 7",
+    desc: "X 各乘三個權重得到 Q、K、V，再把 6 維「切」成 2 個 head × 3 維。兩個 head 結構相同、彼此獨立。",
+    facts: (m) => [["分叉", "d=6 → 2 head × 3"], ["head 之間", "零依賴、可平行"],
+      (m === "decode") ? ["K、V 來源", "KV cache（HBM）"] : ["K、V 來源", "現算（整批）"]],
+    teach: (m) => (m === "decode")
+      ? "<b>教學重點：</b>decode 時 X 只剩新 token 一列；K、V 從 HBM 的 KV cache 讀——每步都要搬，這是頻寬壓力來源。"
+      : "<b>教學重點：</b>multi-head 的「分叉」把一個大矩陣乘切成多個獨立小塊，多送 GPU 一個平行軸（head 軸）。MQA / GQA / MLA 就是在這個分叉上動手腳（共用或壓縮 KV），把 KV cache 變小。",
+    next: () => "▶ 點 head 1 進去看矩陣怎麼乘。" },
+
+  { id: "L3", hash: "head", crumb: "Head", title: "單一 head 的矩陣舞台", lv: "Level 4 / 7",
+    desc: "一個 head 的完整數學：Q·Kᵀ →（causal mask）→ softmax → ·V。切換上方模式看資料流差異。",
+    facts: (m) => (m === "decode")
+      ? [["本步計算", "q[1×3]·Kᵀ → s[1×5]"], ["形狀", "GEMV（向量×矩陣）"], ["AI", "≈ 1–2 FLOPs/Byte"], ["判定", "memory-bound"], ["K/V 來源", "KV cache（HBM）"]]
+      : [["本步計算", "Q[5×3]·Kᵀ[3×5]"], ["形狀", "GEMM（整批）"], ["mask", "causal：j>i 打 ✕"], ["判定", "compute-bound（T 夠大）"],
+         ...(m === "train" ? [["backward", "S、A 要存著等梯度"]] : [["產物", "K、V 寫入 cache"]])],
+    teach: (m) => ({
+        train:   "<b>教學重點：</b>訓練：5 列一起算（causal mask 擋未來）；activations 要留給 backward → 容量壓力。",
+        prefill: "<b>教學重點：</b>prefill = 訓練 forward：整段一次算完，順手把 K、V 存進 cache——「先吃整段、再逐字吐」的前半。",
+        decode:  "<b>教學重點：</b>decode 只算最後一列：S 退化成 [1×5]，GEMM 變 GEMV，AI 掉到個位數 → memory-bound。",
+      }[m]),
+    next: () => "▶ 點中間的「·」：看這個 matmul 在 L2 / HBM 間怎麼搬資料。" },
+
+  { id: "L4", hash: "op", crumb: "計算子", title: "一個 matmul：L2 ⟷ HBM 怎麼搬", lv: "Level 5 / 7",
+    desc: "把鏡頭推到單一 matmul（S = Q·Kᵀ）。operands 住在大而慢的 HBM；要算時切成 tile，沿 HBM → L2 → shared/暫存器 → tensor core 流動，結果再寫回 HBM。",
+    facts: (m) => (m === "decode")
+      ? [["這步形狀", "GEMV（Q 一列）"], ["operand 重複用", "幾乎沒有"], ["L2 命中", "KV ≫ 50MB → miss"], ["主要流量", "L2 ↔ HBM（每步）"], ["判定", "memory-bound"]]
+      : [["這步形狀", "GEMM（整批）"], ["operand 重複用", "高（tile 留 L2/SRAM）"], ["L2 命中", "高"], ["tensor core", "餵滿"], ["判定", m === "train" ? "compute-bound（+ backward 容量）" : "compute-bound"]],
+    teach: (m) => (m === "decode")
+      ? "<b>教學重點：</b>decode 時每個 operand「用一次就丟」，又因 KV cache 比 L2 大 → 放不住 → <b>每一步都從 HBM 重搬</b>。tensor core 再快也餵不滿，瓶頸完全是 <b>L2↔HBM 的搬運</b>。FlashAttention 讓 S 不落 HBM、GQA/MLA 讓 KV 變小、DSA 只讀選中的 KV，都是在減這條流量。"
+      : "<b>教學重點：</b>大 GEMM 時，同一塊 operand tile 被很多次乘加重複用 → 留在 L2 / shared 就不必一直回 HBM（算術強度高）→ compute-bound。訓練還要把 S、A 寫回 HBM 留給 backward，那是<b>容量</b>壓力、不是頻寬。",
+    next: () => "▶ 按 6：FlashAttention 怎麼讓這個 S 不落 HBM。" },
+
+  { id: "L5", hash: "flash", crumb: "FlashAttn", title: () => "FlashAttention：讓 S 不落 HBM（線上 softmax）", lv: "Level 6 / 7",
+    desc: () => FSTEPS[fstep].desc,
+    facts: () => FSTEPS[fstep].facts,
+    teach: () => FSTEPS[fstep].teach,
+    next: () => fstep < FSTEPS.length - 1 ? "▶ 按 → 或點上方步驟看下一步。" : "▶ 按 7：同一份數學在 GPU / TPU / Groq 上長怎樣。" },
+
+  { id: "L6", hash: "hw", crumb: "硬體", title: "同一份數學、三種機器", lv: "Level 7 / 7",
+    desc: "上面切 GPU / TPU / Groq。GPU：HBM ↔ 晶片內 SRAM ↔ tensor core；TPU：weight-stationary 脈動陣列 + XLA；Groq：全 SRAM、砍掉 HBM。",
+    facts: (m, h) => h === "gpu"
+      ? [["權重、KV 住在", "HBM（~3.35 TB/s）"], ["晶片內 SRAM", "L2 50MB / shared 228KB"], ["KV vs SRAM", "KV ≫ L2 → 每步串流"], ["tensor core", "大 GEMM 切 16×16 tile"]]
+      : h === "tpu"
+      ? [["MXU", "128×128 MAC 陣列"], ["資料流", "weight-stationary"], ["排程", "XLA 先排好（靜態）"], ["KV 住在", "HBM（同 GPU）"]]
+      : [["記憶體", "全 SRAM ~230 MB/chip"], ["片上頻寬", "~80 TB/s（HBM 20×+）"], ["排程", "compiler 全確定性"], ["代價", "切片散到幾十~幾百顆"]],
+    teach: (m, h) => h === "gpu"
+      ? "<b>教學重點：</b>大 GEMM 在 tensor core 上「切 tile 逐塊算 MMA」；但 KV cache 比 L2/shared 大太多、<b>放不進晶片</b>，每個 decode step 把權重+KV 從 HBM 串流過 SRAM、算完即丟 → HBM 頻寬決定速度。"
+      : h === "tpu"
+      ? "<b>教學重點：</b>TPU 把 GEMM 走到極致：weight-stationary、XLA 靜態排程。但 KV 一樣住 HBM、decode 一樣是 GEMV → <b>memory-bound 跨硬體成立</b>。"
+      : "<b>教學重點：</b>Groq 的答案是「把 HBM 整個拿掉、全用 SRAM」：80 TB/s 比 HBM 快 20×+，decode token/s 直接起飛。代價：一顆只有 230 MB，得用幾十~幾百顆切片。<b>記憶體牆沒消失，是換個方式繞</b>。",
+    next: () => "✅ 最內層。Esc 退回；切 模式 × 硬體 交叉對照。" },
+];
+
+let cur = 0;
+const crumbsEl = document.getElementById("crumbs"), panelEl = document.getElementById("panel");
+const txt = (v) => typeof v === "function" ? v() : v;
+function renderCrumbs() {
+  crumbsEl.innerHTML = "";
+  LV.forEach((L, i) => {
+    if (i) { const s = document.createElement("span"); s.className = "sep"; s.textContent = "▸"; crumbsEl.appendChild(s); }
+    const c = document.createElement("span");
+    c.className = "crumb" + (i === cur ? " active" : i > cur ? " future" : "");
+    c.textContent = L.crumb; c.onclick = () => go(i);
+    crumbsEl.appendChild(c);
+  });
+}
+function renderPanel() {
+  const L = LV[cur];
+  const tagTxt = { train: "Training", prefill: "Prefill", decode: "Decode" }[mode];
+  const hwTag = cur === 6 ? `　<span class="modetag ${hw}">${hw.toUpperCase()}</span>` : "";
+  panelEl.innerHTML = `
+    <h2><span class="lv">${txt(L.lv)}</span>${txt(L.title)}</h2>
+    <div><span class="modetag ${mode}">模式：${tagTxt}</span>${hwTag}</div>
+    <p class="desc">${txt(L.desc)}</p>
+    <table class="facts">${L.facts(mode, hw).map(([k, v]) => `<tr><td>${k}</td><td class="v">${v}</td></tr>`).join("")}</table>
+    <div class="teach">${L.teach(mode, hw)}</div>
+    <p class="nextstep">${txt(L.next)}</p>
+    <p style="color:var(--foot);font-size:11px;margin-top:auto">玩具規格 T=5、d=6、2 heads・decoder-only——同構於真實 LLM。<br>GPU 記憶體與資料搬遷讀書會 · Transformer 互動地圖</p>`;
+}
+function go(i) {
+  if (i < 0 || i >= LV.length || i === cur) return;
+  document.getElementById(LV[cur].id).classList.remove("show");
+  cur = i;
+  requestAnimationFrame(() => document.getElementById(LV[cur].id).classList.add("show"));
+  renderCrumbs(); renderPanel();
+  if (cur === 5) renderFlash();
+  let frag = "#" + LV[cur].hash + "." + mode;
+  if (cur === 6) frag += "." + hw;
+  history.replaceState(null, "", frag);
+}
+// FlashAttention 步驟
+function renderFlash() {
+  const stepsEl = document.getElementById("fsteps");
+  if (!stepsEl) return;
+  stepsEl.innerHTML = FSTEPS.map((s, i) => `<span class="fstep-pill${i === fstep ? " on" : ""}" data-fs="${i}">${s.label}</span>`).join("");
+  stepsEl.querySelectorAll(".fstep-pill").forEach((p) => p.onclick = () => setFstep(+p.dataset.fs));
+  document.getElementById("fbody").innerHTML = FSTEPS[fstep].body;
+}
+function setFstep(n) {
+  n = Math.max(0, Math.min(FSTEPS.length - 1, n));
+  if (n === fstep) return;
+  fstep = n; renderFlash(); renderPanel();
+}
+// drill-down clicks
+document.getElementById("goDecBlock").onclick = () => go(1);
+document.getElementById("goDecSelf").onclick  = () => go(2);
+document.getElementById("goHead").onclick = () => go(3);
+document.getElementById("goOp").onclick = () => go(4);
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") go(cur - 1);
+  else if ((e.key === "ArrowRight" || e.key === "ArrowLeft") && cur === 5) setFstep(fstep + (e.key === "ArrowRight" ? 1 : -1));
+  else if (e.key >= "1" && e.key <= "7") go(+e.key - 1);
+  else if (e.key === "t" || e.key === "T") { mode = "train"; applyMode(); }
+  else if (e.key === "p" || e.key === "P") { mode = "prefill"; applyMode(); }
+  else if (e.key === "d" || e.key === "D") { mode = "decode"; applyMode(); }
+});
+
+/* hash：#level.mode[.hw]（順序不拘） */
+const parts = location.hash.replace("#", "").split(".");
+const li = LV.findIndex((L) => L.hash === parts[0]);
+cur = li >= 0 ? li : 0;
+parts.slice(1).forEach((p) => {
+  if (["train", "prefill", "decode"].includes(p)) mode = p;
+  else if (["gpu", "tpu", "groq"].includes(p)) hw = p;
+});
+document.getElementById(LV[cur].id).classList.add("show");
+renderCrumbs(); applyHw(); applyMode(); renderFlash();
+</script>
+</body>
+</html>

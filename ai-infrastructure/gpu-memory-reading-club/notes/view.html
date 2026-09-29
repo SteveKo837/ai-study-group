@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>講稿 · GPU 記憶體讀書會</title>
+<link rel="stylesheet" href="../assets/site.css">
+<style>
+  .layout { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 32px; max-width: 1180px; margin: 0 auto; padding: 24px 16px 64px; }
+  .toc { position: sticky; top: 64px; align-self: start; max-height: calc(100vh - 80px); overflow-y: auto; font-size: 13px; }
+  .toc h2 { font-size: 12px; color: var(--mute); letter-spacing: .08em; margin: 0 0 8px; }
+  .toc a { display: block; padding: 3px 0 3px 8px; color: var(--mute); text-decoration: none; border-left: 2px solid var(--line); }
+  .toc a.l3 { padding-left: 20px; }
+  .toc a:hover { color: var(--ink); border-left-color: var(--mem); }
+  article { min-width: 0; font-size: 16px; }
+  article h1 { font-size: 28px; line-height: 1.35; margin: 0 0 16px; }
+  article h2 { font-size: 22px; margin: 40px 0 12px; padding-top: 12px; border-top: 1px solid var(--line); scroll-margin-top: 64px; }
+  article h3 { font-size: 18px; margin: 28px 0 8px; scroll-margin-top: 64px; }
+  article h4 { font-size: 16px; margin: 20px 0 6px; }
+  article table { display: block; overflow-x: auto; border-collapse: collapse; margin: 16px 0; font-size: 14px; }
+  article th, article td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; vertical-align: top; }
+  article th { background: var(--surface-2); }
+  article blockquote { margin: 16px 0; padding: 8px 16px; border-left: 4px solid var(--mem); background: var(--surface); color: var(--ink); }
+  article code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; font-size: .9em; }
+  article pre { background: var(--surface-2); padding: 12px 14px; border-radius: 8px; overflow-x: auto; line-height: 1.5; }
+  article pre code { background: none; padding: 0; }
+  article img { max-width: 100%; }
+  .err { color: var(--warn); }
+  @media (max-width: 860px) { .layout { grid-template-columns: 1fr; } .toc { display: none; } }
+</style>
+</head>
+<body>
+<nav class="topbar">
+  <a href="../index.html">← 首頁</a>
+  <span class="title" id="doc-title">講稿</span>
+  <a id="slides-link" hidden>投影片</a>
+  <a id="quiz-link" hidden>複習測驗</a>
+</nav>
+<div class="layout">
+  <aside class="toc" id="toc" aria-label="本頁目錄"></aside>
+  <article id="doc">載入中…</article>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+<script>
+// 講稿閱讀器：view.html?doc=<檔名不含 .md>，在瀏覽器端把 notes/*.md 轉成 HTML。
+(() => {
+  const DECKS = {
+    "full-series": [1, "full-series"], "class2-transformer-gpu": [2, "class2-transformer-gpu"],
+    "class3-engine-single-node": [3, "class3-engine-single-node"], "class4-models-to-racks": [4, "class4-models-to-racks"],
+  };
+  const doc = new URLSearchParams(location.search).get("doc") || "";
+  const out = document.getElementById("doc");
+  if (!/^[a-z0-9_-]+$/.test(doc)) { out.innerHTML = '<p class="err">找不到這份講稿。請從<a href="../index.html">首頁</a>進入。</p>'; return; }
+
+  if (DECKS[doc]) {
+    const [n, deck] = DECKS[doc];
+    Object.assign(document.getElementById("slides-link"), { href: `../slides/${deck}.html`, hidden: false });
+    Object.assign(document.getElementById("quiz-link"), { href: `../quiz/index.html?class=${n}`, hidden: false });
+  }
+
+  // 相對連結改寫：同資料夾 .md → 本閱讀器；舊 .pptx → 新 .html
+  const rewrite = (href) => {
+    if (!href || /^(https?:|mailto:|#)/.test(href)) return href;
+    const [path, hash] = href.split("#");
+    const md = path.match(/^(?:\.\/)?([a-z0-9_-]+)\.md$/i);
+    if (md) return `view.html?doc=${md[1]}${hash ? "#" + hash : ""}`;
+    if (/\.pptx$/.test(path)) return path.replace(/\.pptx$/, ".html");
+    if (/(^|\/)README\.md$/.test(path)) return "../index.html";
+    return href;
+  };
+  const slug = (t, used) => {
+    let s = t.trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "") || "sec";
+    let k = s, i = 2;
+    while (used.has(k)) k = `${s}-${i++}`;
+    used.add(k);
+    return k;
+  };
+
+  fetch(`${doc}.md`).then((r) => { if (!r.ok) throw new Error(r.status); return r.text(); }).then((md) => {
+    out.innerHTML = DOMPurify.sanitize(marked.parse(md));
+    out.querySelectorAll("a[href]").forEach((a) => a.setAttribute("href", rewrite(a.getAttribute("href"))));
+    const used = new Set(), toc = document.getElementById("toc");
+    const heads = [...out.querySelectorAll("h2, h3")];
+    if (heads.length) toc.innerHTML = "<h2>目錄</h2>";
+    heads.forEach((h) => {
+      h.id = slug(h.textContent, used);
+      const a = document.createElement("a");
+      a.href = `#${h.id}`; a.textContent = h.textContent; a.className = h.tagName === "H3" ? "l3" : "";
+      toc.appendChild(a);
+    });
+    const h1 = out.querySelector("h1");
+    if (h1) { document.getElementById("doc-title").textContent = h1.textContent; document.title = `${h1.textContent} · 講稿`; }
+    if (location.hash) document.getElementById(decodeURIComponent(location.hash.slice(1)))?.scrollIntoView();
+  }).catch(() => { out.innerHTML = '<p class="err">講稿載入失敗。若是直接用 file:// 開啟，請改用本機伺服器或 GitHub Pages。</p>'; });
+})();
+</script>
+</body>
+</html>
