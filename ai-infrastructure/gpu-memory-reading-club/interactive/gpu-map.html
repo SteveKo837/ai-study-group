@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GPU 互動式地圖 — 從 Cluster 切到 SM</title>
+<style>
+  :root {
+    --bg: #0E1726; --bg2: #16233A; --bg3: #1C2E4A;
+    --ink: #EAF1FB; --mute: #8FA6C4; --line: #2A3D5C; --foot: #5C7299;
+    --mem: #38BDF8; --comp: #F59E0B; --warn: #FB7185; --good: #34D399;
+    --memtint: #10455F; --comptint: #4A3410; --warntint: #4A2433;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font-family: "PingFang TC", "Noto Sans TC", system-ui, sans-serif;
+    overflow: hidden; user-select: none;
+  }
+  .mono { font-family: Menlo, ui-monospace, monospace; }
+
+  /* ---- top bar ---- */
+  #topbar {
+    display: flex; align-items: center; gap: 14px;
+    padding: 14px 28px; border-bottom: 1px solid var(--line);
+  }
+  #crumbs { display: flex; align-items: center; gap: 8px; font-size: 15px; }
+  .crumb {
+    padding: 5px 14px; border-radius: 8px; cursor: pointer;
+    background: var(--bg2); color: var(--mute); border: 1px solid var(--line);
+    transition: all .15s;
+  }
+  .crumb:hover { color: var(--ink); border-color: var(--mem); }
+  .crumb.active { background: var(--mem); color: var(--bg); font-weight: 700; border-color: var(--mem); }
+  .crumb.future { opacity: .35; pointer-events: none; }
+  .sep { color: var(--foot); }
+  #hint { margin-left: auto; color: var(--foot); font-size: 12.5px; }
+  #hint kbd {
+    background: var(--bg3); border: 1px solid var(--line); border-radius: 4px;
+    padding: 1px 6px; font-family: Menlo, monospace; font-size: 11px; color: var(--mute);
+  }
+
+  /* ---- stage layout ---- */
+  #stage { display: flex; height: calc(100% - 58px); }
+  #canvas { flex: 1; position: relative; overflow: hidden; }
+  .level {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    opacity: 0; transform: scale(.86); pointer-events: none;
+    transition: opacity .32s ease, transform .32s ease;
+  }
+  .level.show { opacity: 1; transform: scale(1); pointer-events: auto; }
+  .level.zoomout { transform: scale(1.5); }
+
+  /* ---- side info panel ---- */
+  #panel {
+    width: 360px; border-left: 1px solid var(--line); padding: 26px 24px;
+    display: flex; flex-direction: column; gap: 16px; overflow-y: auto;
+  }
+  #panel h2 { font-size: 21px; }
+  #panel h2 .lv { color: var(--mem); font-family: Menlo, monospace; font-size: 13px; display: block; margin-bottom: 4px; }
+  #panel p.desc { color: var(--mute); font-size: 14px; line-height: 1.65; }
+  table.facts { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.facts td { padding: 7px 8px; border: 1px solid var(--line); }
+  table.facts td:first-child { color: var(--mute); width: 46%; }
+  table.facts td.v { font-family: Menlo, monospace; color: var(--mem); font-weight: 700; }
+  .teach {
+    background: var(--bg2); border-left: 4px solid var(--comp); border-radius: 6px;
+    padding: 12px 14px; font-size: 13.5px; line-height: 1.6; color: var(--ink);
+  }
+  .teach b { color: var(--comp); }
+  .nextstep { color: var(--good); font-size: 13px; }
+
+  /* ---- shared visual pieces ---- */
+  .vis { position: relative; }
+  .blocklabel { position: absolute; font-size: 11px; color: var(--mute); }
+  .clickable { cursor: pointer; transition: all .15s; }
+  .clickable:hover { filter: brightness(1.35); }
+  .pulse { animation: pulse 2s infinite; }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(56,189,248,.45); }
+    50%      { box-shadow: 0 0 0 7px rgba(56,189,248,0); }
+  }
+  .tag {
+    position: absolute; font-size: 11px; font-family: Menlo, monospace;
+    color: var(--bg); background: var(--mem); padding: 1px 7px; border-radius: 4px; font-weight: 700;
+  }
+  .tag.amber { background: var(--comp); }
+  .tag.rose  { background: var(--warn); }
+
+  /* ===== L0 cluster ===== */
+  #L0 .rackrow { display: flex; gap: 34px; }
+  .node {
+    width: 150px; height: 96px; background: var(--bg2);
+    border: 1.5px solid var(--line); border-radius: 10px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  }
+  .node:hover { border-color: var(--mem); }
+  .node .nm { font-size: 13px; font-weight: 700; }
+  .node .gpus { display: grid; grid-template-columns: repeat(4, 14px); gap: 4px; }
+  .node .gpus i { width: 14px; height: 10px; background: var(--memtint); border: 1px solid var(--mem); border-radius: 2px; }
+  .switchbar {
+    margin: 30px auto; width: 560px; height: 44px; background: var(--bg3);
+    border: 1.5px solid var(--comp); border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; color: var(--comp); font-weight: 700;
+  }
+  .linkline { width: 2px; height: 26px; background: var(--foot); margin: 0 auto; }
+
+  /* ===== L1 node ===== */
+  #L1 .board {
+    width: 860px; background: var(--bg2); border: 1.5px solid var(--line);
+    border-radius: 14px; padding: 26px 30px; position: relative;
+  }
+  .hostrow { display: flex; gap: 18px; align-items: stretch; margin-bottom: 8px; }
+  .chip {
+    border-radius: 8px; border: 1.5px solid var(--line); background: var(--bg3);
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+    font-size: 13px; font-weight: 700; padding: 10px 14px;
+  }
+  .chip .bw { font-family: Menlo, monospace; font-size: 11px; color: var(--mute); font-weight: 400; }
+  .buslabel { text-align: center; font-family: Menlo, monospace; font-size: 11.5px; margin: 10px 0; }
+  .buslabel.pcie { color: var(--warn); }
+  .buslabel.nvl  { color: var(--mem); }
+  .gpurow { display: flex; gap: 12px; justify-content: center; }
+  .gpu8 {
+    width: 88px; height: 64px; background: var(--memtint); border: 1.5px solid var(--mem);
+    border-radius: 8px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    font-size: 12.5px; font-weight: 700; color: var(--mem);
+  }
+  .gpu8 .hbmrow { display: flex; gap: 3px; margin-top: 4px; }
+  .gpu8 .hbmrow i { width: 9px; height: 7px; background: var(--mem); opacity: .55; border-radius: 1px; }
+  .nvswitch {
+    margin-top: 12px; height: 34px; background: var(--bg3); border: 1.5px solid var(--mem);
+    border-radius: 8px; display: flex; align-items: center; justify-content: center;
+    color: var(--mem); font-size: 12.5px; font-weight: 700;
+  }
+
+  /* ===== L2 gpu ===== */
+  #L2 .package {
+    display: flex; align-items: center; gap: 22px; background: var(--bg2);
+    border: 1.5px solid var(--line); border-radius: 16px; padding: 30px 34px;
+  }
+  .hbmstack { display: flex; flex-direction: column; gap: 12px; }
+  .hbm {
+    width: 74px; height: 78px; background: var(--memtint); border: 1.5px solid var(--mem);
+    border-radius: 6px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    color: var(--mem); font-size: 11.5px; font-weight: 700; gap: 3px;
+  }
+  .hbm i { display: block; width: 48px; height: 4px; background: var(--mem); opacity: .5; border-radius: 1px; }
+  .die {
+    background: var(--bg3); border: 1.5px solid var(--comp); border-radius: 10px; padding: 18px;
+    display: flex; flex-direction: column; gap: 12px; align-items: center;
+  }
+  .die .dl { font-size: 12.5px; color: var(--comp); font-weight: 700; }
+  .smgrid { display: grid; grid-template-columns: repeat(12, 26px); gap: 5px; }
+  .sm {
+    width: 26px; height: 26px; background: var(--comptint); border: 1px solid var(--comp); border-radius: 3px;
+  }
+  .sm:hover { background: var(--comp); }
+  .l2bar {
+    width: 100%; height: 30px; background: var(--bg2); border: 1.5px dashed var(--mute); border-radius: 6px;
+    display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--mute);
+  }
+
+  /* ===== L3 sm ===== */
+  #L3 .smcard {
+    width: 760px; background: var(--bg2); border: 1.5px solid var(--comp); border-radius: 14px;
+    padding: 24px 28px; display: flex; flex-direction: column; gap: 14px;
+  }
+  .smrow { display: flex; gap: 14px; }
+  .unit {
+    flex: 1; border-radius: 8px; padding: 12px; border: 1.5px solid var(--line);
+    display: flex; flex-direction: column; gap: 7px; background: var(--bg3);
+  }
+  .unit h4 { font-size: 13.5px; }
+  .unit .note { font-size: 11.5px; color: var(--mute); line-height: 1.45; }
+  .coregrid { display: grid; grid-template-columns: repeat(16, 12px); gap: 3px; }
+  .coregrid i { width: 12px; height: 12px; background: var(--mem); opacity: .8; border-radius: 2px; }
+  .tcgrid { display: flex; gap: 6px; }
+  .tcgrid i { width: 34px; height: 28px; background: var(--comp); border-radius: 4px; }
+  .membar {
+    border-radius: 8px; padding: 12px 16px; border: 1.5px solid var(--good); background: rgba(52,211,153,.08);
+    display: flex; justify-content: space-between; align-items: center; font-size: 13.5px;
+  }
+  .membar b { color: var(--good); }
+  .membar .bw { font-family: Menlo, monospace; font-size: 12px; color: var(--good); }
+  /* L4 — CUDA core vs Tensor core */
+  .unitwrap { display: flex; align-items: stretch; gap: 18px; justify-content: center; }
+  .ucard { width: 400px; background: var(--bg2); border: 1.5px solid var(--line); border-radius: 14px; padding: 18px 20px; display: flex; flex-direction: column; gap: 9px; }
+  .ucard.cuda { border-color: var(--mem); }
+  .ucard.tc { border-color: var(--comp); }
+  .ucard h3 { font-size: 17px; }
+  .ucard.cuda h3 { color: var(--mem); }
+  .ucard.tc h3 { color: var(--comp); }
+  .ucard h3 span { display: block; font-size: 11px; color: var(--mute); font-weight: 400; margin-top: 2px; }
+  .formula { font-family: Menlo, monospace; font-size: 19px; font-weight: 700; color: var(--ink); background: #0A1322; border-radius: 8px; padding: 9px; text-align: center; }
+  .ulabel { font-size: 11.5px; color: var(--mute); line-height: 1.4; }
+  .oplist { display: flex; flex-direction: column; gap: 4px; }
+  .oprow { display: flex; align-items: baseline; gap: 8px; background: #0A1322; border-radius: 6px; padding: 5px 10px; }
+  .opn { font-family: Menlo, monospace; font-size: 11px; color: var(--mem); font-weight: 700; min-width: 96px; }
+  .opf { font-family: Menlo, monospace; font-size: 12.5px; color: var(--ink); }
+  .grid4 { display: grid; grid-template-columns: repeat(4, 24px); gap: 3px; margin: 2px auto; }
+  .grid4 i { width: 24px; height: 24px; border-radius: 3px; background: var(--bg3); border: 1px solid var(--line); }
+  .grid4.cudaG i.on { background: var(--mem); border-color: var(--mem); }
+  .grid4.tcG i.on { background: var(--comp); border-color: var(--comp); }
+  .does { font-size: 12px; color: var(--ink); line-height: 1.5; margin-top: auto; padding-top: 6px; border-top: 1px solid var(--line); }
+  .does b { color: var(--ink); }
+  .vsbadge { align-self: center; font-size: 12.5px; font-weight: 700; color: var(--warn); text-align: center; line-height: 1.35; }
+  .splitstrip { margin-top: 16px; font-size: 13px; color: var(--ink); background: var(--bg2); border: 1px solid var(--line); border-radius: 8px; padding: 10px 16px; text-align: center; max-width: 840px; line-height: 1.5; }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div id="crumbs"></div>
+  <div id="hint">點擊發亮的元件往內切　·　<kbd>Esc</kbd> 回上層　·　<kbd>1</kbd>–<kbd>5</kbd> 直接跳層</div>
+</div>
+
+<div id="stage">
+  <div id="canvas">
+
+    <!-- ============ L0 : CLUSTER ============ -->
+    <div class="level" id="L0">
+      <div class="vis">
+        <div class="rackrow" id="rackTop"></div>
+        <div class="linkline"></div>
+        <div class="switchbar">節點間網路 — InfiniBand / NVLink Switch（每 link ~25–50 GB/s）</div>
+        <div class="linkline"></div>
+        <div class="rackrow" id="rackBot"></div>
+      </div>
+    </div>
+
+    <!-- ============ L1 : NODE ============ -->
+    <div class="level" id="L1">
+      <div class="board">
+        <div class="hostrow">
+          <div class="chip" style="flex:1.1">CPU ×2<span class="bw">數十核心</span></div>
+          <div class="chip" style="flex:1.4">CPU DRAM（DDR5）<span class="bw">~100 GB/s・TB 級容量</span></div>
+          <div class="chip" style="flex:1">NVMe SSD<span class="bw">~7 GB/s</span></div>
+        </div>
+        <div class="buslabel pcie">─── PCIe Gen5 ~64 GB/s ──「最常被跨越的瓶頸」───</div>
+        <div class="gpurow" id="gpuRow"></div>
+        <div class="buslabel nvl">─── NVLink ~900 GB/s（比 PCIe 快一個量級）───</div>
+        <div class="nvswitch">NVSwitch — 節點內 8 卡全互連</div>
+      </div>
+    </div>
+
+    <!-- ============ L2 : GPU ============ -->
+    <div class="level" id="L2">
+      <div class="package">
+        <div class="hbmstack" id="hbmL"></div>
+        <div class="die">
+          <div class="dl">GPU die（H100：132 個 SM）</div>
+          <div class="smgrid" id="smGrid"></div>
+          <div class="l2bar">L2 cache ~50 MB（全 SM 共用・數 TB/s）</div>
+        </div>
+        <div class="hbmstack" id="hbmR"></div>
+      </div>
+    </div>
+
+    <!-- ============ L3 : SM ============ -->
+    <div class="level" id="L3">
+      <div class="smcard">
+        <div class="smrow">
+          <div class="unit">
+            <h4>Warp 排程器 ×4</h4>
+            <div class="note">每個管 32 條 lane；某 warp 等 HBM（數百 cycle）就切到別的 warp——藏延遲的機制。</div>
+          </div>
+          <div class="unit">
+            <h4>Register file</h4>
+            <div class="note">~256 KB / SM・每 thread 私有・最快一層（編譯器管理）。</div>
+          </div>
+        </div>
+        <div class="smrow">
+          <div class="unit clickable pulse" id="smCudaUnit" style="flex:1.6">
+            <h4>CUDA cores ×128 <span class="note" style="display:inline">（通用浮點 / 整數）← 點我</span></h4>
+            <div class="coregrid" id="cudaCores"></div>
+          </div>
+          <div class="unit clickable pulse" id="smTcUnit">
+            <h4>Tensor cores ×4 <span class="note" style="display:inline">← 點我</span></h4>
+            <div class="tcgrid"><i></i><i></i><i></i><i></i></div>
+            <div class="note">矩陣乘加專用；要 tiling 把資料排好餵它。</div>
+          </div>
+        </div>
+        <div class="membar">
+          <span><b>Shared memory + L1</b>（~228 KB／SM）— 全 GPU 唯一「程式可控」的快取，tiling 的槓桿</span>
+          <span class="bw">數十 TB/s</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ L4 : 運算單元 CUDA vs Tensor ============ -->
+    <div class="level" id="L4">
+      <div style="display:flex; flex-direction:column; align-items:center">
+        <div class="unitwrap">
+          <div class="ucard cuda">
+            <h3>CUDA core ×128<span>通用純量 · SIMT · 什麼都能算</span></h3>
+            <div class="ulabel">一拍能算「各種」純量運算 — 每 lane 獨立、32 lane 並行：</div>
+            <div class="oplist">
+              <div class="oprow"><span class="opn">FMA</span><span class="opf">d = a·b + c</span></div>
+              <div class="oprow"><span class="opn">ReLU</span><span class="opf">max(0, x)</span></div>
+              <div class="oprow"><span class="opn">sigmoid</span><span class="opf">σ(x) = 1 / (1 + e⁻ˣ)</span></div>
+              <div class="oprow"><span class="opn">tanh · GELU</span><span class="opf">x · Φ(x)</span></div>
+              <div class="oprow"><span class="opn">exp · ln · rsqrt</span><span class="opf">eˣ · ln x · 1/√x</span></div>
+              <div class="oprow"><span class="opn">reduce · 比較</span><span class="opf">Σx · max · &gt;&lt;（softmax、argmax）</span></div>
+            </div>
+            <div class="ulabel">連矩陣乘也能做，但要逐格累加 → 慢（那是 tensor core 的活）</div>
+            <div class="does"><b>在 Transformer 裡做：</b>softmax（exp／加總／相除）、LayerNorm、GELU 激活、residual 加法、index／分支、位置編碼</div>
+          </div>
+          <div class="vsbadge">做<br>不同<br>的事</div>
+          <div class="ucard tc">
+            <h3>Tensor core ×4<span>矩陣乘加 · MMA · 只做矩陣乘</span></h3>
+            <div class="formula">D = A · B + C</div>
+            <div class="ulabel">一拍：一整塊 tile（如 16×16×16）一個指令算完</div>
+            <div class="grid4 tcG" id="tcDemo"></div>
+            <div class="ulabel">算 C = A·B：整塊 tile 一拍吃掉 ~4096 個乘加 → 快一個量級</div>
+            <div class="does"><b>在 Transformer 裡做：</b>QKV 投影、Q·Kᵀ、softmax 後 ·V、FFN 兩層 GEMM（≈ 全層 99% FLOPs）</div>
+          </div>
+        </div>
+        <div class="splitstrip">同一層 Transformer 的分工：<b style="color:var(--comp)">tensor core</b> 扛矩陣乘（吃 FLOPs、compute-bound）、<b style="color:var(--mem)">CUDA core</b> 扛 softmax／norm／激活（FLOPs 少但步驟多、常 memory-bound）→ 這就是為什麼 kernel 要 tiling 餵 tensor core、又要 fuse 那些 elementwise 省搬運。</div>
+      </div>
+    </div>
+
+  </div><!-- /canvas -->
+
+  <div id="panel"></div>
+</div>
+
+<script>
+"use strict";
+
+/* ---------------- level metadata ---------------- */
+const LEVELS = [
+  {
+    id: "L0", hash: "cluster", crumb: "Cluster", title: "GPU Cluster", lv: "Level 0 / 5",
+    desc: "多個節點（server）用 InfiniBand 或 NVLink Switch 相連。訓練大模型時，資料平行/張量平行的梯度與啟動值都要走這層。",
+    facts: [
+      ["節點數", "數十 ~ 數千"],
+      ["節點間頻寬", "~25–50 GB/s / link"],
+      ["NVLink Switch 域", "GPU↔GPU ~900 GB/s"],
+    ],
+    teach: "<b>教學重點：</b>跨節點是整個系統「最慢的一段路」——平行策略（tensor parallel 留節點內、data parallel 跨節點）就是繞著這個數字設計的。",
+    next: "▶ 點任一個節點，切進去看裡面。",
+  },
+  {
+    id: "L1", hash: "node", crumb: "Node", title: "節點（DGX 類 server）", lv: "Level 1 / 5",
+    desc: "一台 server：2 顆 CPU + DRAM + NVMe + 8 張 GPU。Host 與 GPU 之間隔著 PCIe；GPU 彼此用 NVLink/NVSwitch 直連。",
+    facts: [
+      ["CPU DRAM", "~100 GB/s"],
+      ["NVMe SSD", "~7 GB/s"],
+      ["PCIe Gen5（Host↔GPU）", "~64 GB/s"],
+      ["NVLink（GPU↔GPU）", "~900 GB/s"],
+    ],
+    teach: "<b>教學重點：</b>PCIe 比 HBM 慢約 100×——資料反覆跨 PCIe 進出，整體就被它拖住（合輯 Part 1 的「最慢那段路」心法）。",
+    next: "▶ 點任一張 GPU，切進晶片。",
+  },
+  {
+    id: "L2", hash: "gpu", crumb: "GPU", title: "GPU（H100 級）", lv: "Level 2 / 5",
+    desc: "package 上：中央是 GPU die（132 個 SM + 共用 L2），兩側 3D 堆疊的 HBM 用超寬匯流排直連——頻寬 TB/s 級的來源。",
+    facts: [
+      ["SM 數", "132（H100 SXM）"],
+      ["HBM3 頻寬", "~3.35 TB/s"],
+      ["HBM 容量", "80 GB"],
+      ["L2 cache", "~50 MB・數 TB/s"],
+      ["BF16 峰值算力", "~990 TFLOPS"],
+    ],
+    teach: "<b>教學重點：</b>ridge point = 990 ÷ 3.35 ≈ <b>300 FLOPs/Byte</b>——算術強度低於它就是 memory-bound，再強的算力也餵不飽。",
+    next: "▶ 點任一個 SM 小格，切進運算單元。",
+  },
+  {
+    id: "L3", hash: "sm", crumb: "SM", title: "SM（Streaming Multiprocessor）", lv: "Level 3 / 5",
+    desc: "最內層：128 個 CUDA core、4 個 tensor core、4 個 warp 排程器、register file，以及唯一程式可控的 shared memory + L1。",
+    facts: [
+      ["CUDA cores", "128 / SM"],
+      ["Tensor cores", "4 / SM"],
+      ["Shared mem + L1", "~228 KB・數十 TB/s"],
+      ["Register file", "~256 KB"],
+      ["駐留 warps", "最多 64 / SM"],
+    ],
+    teach: "<b>教學重點：</b>warp 排程器靠「夠多 warp 待命」藏 HBM 延遲；tiling 靠 shared memory 把資料留在晶片內重複用——合輯 Part 1/2 的兩根支柱都長在這裡。",
+    next: "▶ 點 CUDA cores 或 Tensor cores，看它們各做不一樣的事。",
+  },
+  {
+    id: "L4", hash: "core", crumb: "運算單元", title: "CUDA core vs Tensor core：做不一樣的事", lv: "Level 4 / 5",
+    desc: "同一個 SM 裡兩種運算單元：CUDA core 是通用純量單元（一拍一個 FMA），Tensor core 是矩陣乘加單元（一拍一整塊 tile）。",
+    facts: [
+      ["CUDA core 一拍", "1 個 FMA／lane（d=a·b+c）"],
+      ["Tensor core 一拍", "一整塊 tile MMA（如 16×16×16）"],
+      ["吞吐差距", "tensor ≈ 高一個量級（矩陣乘）"],
+      ["tensor 限制", "只做矩陣乘、要 fp16/bf16 + tiling"],
+    ],
+    teach: "<b>教學重點：</b>一層 Transformer 裡，<b>tensor core</b> 扛幾乎全部 FLOPs（QKV／attention／FFN 的 GEMM），<b>CUDA core</b> 扛 softmax／LayerNorm／GELU／residual 這些「非矩陣乘」的零碎運算——FLOPs 少但步驟多、常卡記憶體。所以 kernel 一邊 tiling 餵 tensor core，一邊 fuse elementwise 省搬運。",
+    next: "✅ 最深一層。Esc 一路退回，或按 1–5 跳層。",
+  },
+];
+
+let cur = 0;
+
+/* ---------------- build visuals ---------------- */
+function makeNode(i) {
+  const d = document.createElement("div");
+  d.className = "node clickable pulse";
+  d.innerHTML = `<span class="nm">node ${i}</span><span class="gpus">${"<i></i>".repeat(8)}</span>`;
+  d.onclick = () => go(1);
+  return d;
+}
+const rt = document.getElementById("rackTop"), rb = document.getElementById("rackBot");
+for (let i = 0; i < 4; i++) rt.appendChild(makeNode(i));
+for (let i = 4; i < 8; i++) rb.appendChild(makeNode(i));
+
+const gr = document.getElementById("gpuRow");
+for (let i = 0; i < 8; i++) {
+  const g = document.createElement("div");
+  g.className = "gpu8 clickable pulse";
+  g.innerHTML = `GPU ${i}<span class="hbmrow">${"<i></i>".repeat(5)}</span>`;
+  g.onclick = () => go(2);
+  gr.appendChild(g);
+}
+
+const hl = document.getElementById("hbmL"), hr = document.getElementById("hbmR");
+[hl, hr].forEach((side) => {
+  for (let i = 0; i < 3; i++) {
+    const h = document.createElement("div");
+    h.className = "hbm";
+    h.innerHTML = `HBM3<i></i><i></i><i></i>`;
+    side.appendChild(h);
+  }
+});
+const sg = document.getElementById("smGrid");
+for (let i = 0; i < 132; i++) {
+  const m = document.createElement("div");
+  m.className = "sm clickable" + (i === 27 ? " pulse" : "");
+  m.title = `SM ${i}`;
+  m.onclick = () => go(3);
+  sg.appendChild(m);
+}
+const cc = document.getElementById("cudaCores");
+for (let i = 0; i < 128; i++) cc.appendChild(document.createElement("i"));
+
+// SM 的兩個運算單元 → 切進 L4
+document.getElementById("smCudaUnit").onclick = () => go(4);
+document.getElementById("smTcUnit").onclick = () => go(4);
+
+// L4 示範格：CUDA 一格一格逐步算；Tensor 整塊一拍亮
+// CUDA core 側改用運算子選單（不再用移動格動畫）；tensor core 維持整塊 tile 一次亮
+const tcDemo = document.getElementById("tcDemo");
+for (let i = 0; i < 16; i++) tcDemo.appendChild(document.createElement("i"));
+tcDemo.querySelectorAll("i").forEach((c) => c.classList.add("on"));
+
+/* ---------------- navigation ---------------- */
+const crumbsEl = document.getElementById("crumbs");
+const panelEl = document.getElementById("panel");
+
+function renderCrumbs() {
+  crumbsEl.innerHTML = "";
+  LEVELS.forEach((L, i) => {
+    if (i > 0) {
+      const sep = document.createElement("span");
+      sep.className = "sep"; sep.textContent = "▸";
+      crumbsEl.appendChild(sep);
+    }
+    const c = document.createElement("span");
+    c.className = "crumb" + (i === cur ? " active" : i > cur ? " future" : "");
+    c.textContent = L.crumb;
+    c.onclick = () => go(i);
+    crumbsEl.appendChild(c);
+  });
+}
+
+function renderPanel() {
+  const L = LEVELS[cur];
+  panelEl.innerHTML = `
+    <h2><span class="lv">${L.lv}</span>${L.title}</h2>
+    <p class="desc">${L.desc}</p>
+    <table class="facts">${L.facts.map(([k, v]) => `<tr><td>${k}</td><td class="v">${v}</td></tr>`).join("")}</table>
+    <div class="teach">${L.teach}</div>
+    <p class="nextstep">${L.next}</p>
+    <p style="color:var(--foot);font-size:11.5px;margin-top:auto">數字為約略值（H100 世代），以官方規格為準。<br>GPU 記憶體與資料搬遷讀書會 · 互動地圖</p>`;
+}
+
+function go(i) {
+  if (i < 0 || i >= LEVELS.length || i === cur) return;
+  const from = document.getElementById(LEVELS[cur].id);
+  const to = document.getElementById(LEVELS[i].id);
+  from.classList.remove("show");
+  if (i > cur) from.classList.add("zoomout"); else from.classList.remove("zoomout");
+  to.classList.remove("zoomout");
+  cur = i;
+  requestAnimationFrame(() => to.classList.add("show"));
+  renderCrumbs(); renderPanel();
+  history.replaceState(null, "", "#" + LEVELS[cur].hash);
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") go(cur - 1);
+  else if (e.key >= "1" && e.key <= "5") go(Number(e.key) - 1);
+});
+
+/* hash 直達（#cluster / #node / #gpu / #sm / #core）—— 測試與講者跳頁用 */
+const startIdx = Math.max(0, LEVELS.findIndex((L) => "#" + L.hash === location.hash));
+cur = startIdx === -1 ? 0 : startIdx;
+document.getElementById(LEVELS[cur].id).classList.add("show");
+renderCrumbs(); renderPanel();
+</script>
+</body>
+</html>

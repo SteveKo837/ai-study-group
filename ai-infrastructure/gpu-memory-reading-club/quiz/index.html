@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>複習測驗 · GPU 記憶體讀書會</title>
+<link rel="stylesheet" href="../assets/site.css">
+<style>
+  .wrap { max-width: 760px; }
+  h1 { font-size: 26px; margin: 0 0 6px; }
+  .sub { color: var(--mute); margin: 0 0 20px; font-size: 15px; }
+  .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
+  .tabs button { font: inherit; font-size: 14px; padding: 6px 12px; border-radius: 999px; cursor: pointer;
+                 border: 1px solid var(--line); background: var(--surface); color: var(--mute); }
+  .tabs button[aria-pressed="true"] { background: var(--mem); border-color: var(--mem); color: var(--surface); font-weight: 700; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; }
+  .meta { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--mute); margin-bottom: 10px; }
+  .chip { font-weight: 700; padding: 2px 10px; border-radius: 999px; background: var(--surface-2); color: var(--ink); }
+  .progress { margin-left: auto; font-family: var(--mono); }
+  .bar { height: 4px; background: var(--surface-2); border-radius: 2px; margin-bottom: 18px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--mem); transition: width .3s; }
+  .q { font-size: 17px; font-weight: 700; margin: 0 0 16px; line-height: 1.6; }
+  .opts { display: flex; flex-direction: column; gap: 10px; }
+  .opt { text-align: left; font: inherit; color: var(--ink); background: var(--bg); border: 1.5px solid var(--line);
+         border-radius: 8px; padding: 10px 14px; cursor: pointer; display: grid; grid-template-columns: 28px 1fr; gap: 2px 8px; }
+  .opt:hover:not(:disabled) { border-color: var(--mem); }
+  .opt .k { grid-row: span 2; font-family: var(--mono); font-weight: 700; color: var(--mute); }
+  .opt .l { font-weight: 700; }
+  .opt .d { font-size: 14px; color: var(--mute); }
+  .opt:disabled { cursor: default; }
+  .opt.wrong { border-color: var(--warn); background: var(--warn-tint); opacity: .75; }
+  .opt.right { border-color: var(--good); background: var(--good-tint); }
+  .fb { margin-top: 16px; padding: 12px 14px; border-radius: 8px; font-size: 15px; }
+  .fb.hint { background: var(--comp-tint); border-left: 4px solid var(--comp); }
+  .fb.ok { background: var(--good-tint); border-left: 4px solid var(--good); }
+  .fb.miss { background: var(--warn-tint); border-left: 4px solid var(--warn); }
+  .fb b { display: block; margin-bottom: 4px; }
+  .actions { display: flex; gap: 10px; margin-top: 16px; }
+  .btn.primary { background: var(--mem); border-color: var(--mem); color: var(--surface); font-weight: 700; }
+  .sum h2 { font-size: 20px; margin: 0 0 12px; }
+  .sum h3 { font-size: 16px; margin: 20px 0 6px; }
+  .sum ul { margin: 0; padding-left: 20px; }
+  .sum li { margin: 4px 0; }
+  .prompt { white-space: pre-wrap; background: var(--surface-2); border-radius: 8px; padding: 12px 14px; font-size: 14px; line-height: 1.6; font-family: inherit; margin: 8px 0 0; }
+  .score { font-family: var(--mono); font-size: 32px; font-weight: 700; color: var(--mem); }
+</style>
+</head>
+<body>
+<nav class="topbar">
+  <a href="../index.html">← 首頁</a>
+  <span class="title">複習測驗</span>
+  <a id="slides-link" href="../index.html">投影片</a>
+</nav>
+<main class="wrap">
+  <h1>複習測驗</h1>
+  <p class="sub">每堂 8 題，難度依序是 辨識 → 邊界 → 遷移 → 取捨。答錯會先給一個針對你所選選項的提示，再錯一次才公布答案。</p>
+  <div class="tabs" id="tabs" role="group" aria-label="選擇堂次"></div>
+  <section id="stage" aria-live="polite"></section>
+</main>
+<script src="questions.js"></script>
+<script>
+(() => {
+  const DECKS = ["full-series", "class2-transformer-gpu", "class3-engine-single-node", "class4-models-to-racks"];
+  const KEYS = "ABCD";
+  const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const stage = document.getElementById("stage");
+  const tabs = document.getElementById("tabs");
+  const bank = window.QUIZ || [];
+  if (!bank.length) { stage.innerHTML = '<p>題庫載入失敗。</p>'; return; }
+
+  let state = null;
+
+  const pickClass = (id) => {
+    const lesson = bank.find((c) => c.id === id) || bank[0];
+    state = { lesson, i: 0, tries: 0, log: [] };   // log: {q, firstPick, result: "first"|"second"|"miss"}
+    tabs.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(+b.dataset.id === lesson.id)));
+    document.getElementById("slides-link").href = `../slides/${DECKS[lesson.id - 1]}.html`;
+    history.replaceState(null, "", `?class=${lesson.id}`);
+    renderQuestion();
+  };
+
+  const renderQuestion = () => {
+    const { lesson, i } = state, q = lesson.questions[i], total = lesson.questions.length;
+    state.tries = 0;
+    stage.innerHTML = `
+      <div class="card">
+        <div class="meta"><span class="chip">第 ${i + 1} 題 · ${esc(q.level)}</span><span>${esc(q.concept)}</span>
+          <span class="progress">${i + 1} / ${total}</span></div>
+        <div class="bar"><i style="width:${(i / total) * 100}%"></i></div>
+        <p class="q">${esc(q.q)}</p>
+        <div class="opts">${q.options.map((o, k) => `
+          <button class="opt" type="button" data-k="${k}"><span class="k">${KEYS[k]}</span>
+            <span class="l">${esc(o.label)}</span><span class="d">${esc(o.desc)}</span></button>`).join("")}</div>
+        <div id="fb"></div>
+      </div>`;
+    stage.querySelectorAll(".opt").forEach((b) => b.addEventListener("click", () => answer(+b.dataset.k)));
+    if (stage.getBoundingClientRect().top < 0) stage.scrollIntoView();
+  };
+
+  const answer = (k) => {
+    const q = state.lesson.questions[state.i], fb = document.getElementById("fb");
+    const btn = stage.querySelector(`.opt[data-k="${k}"]`);
+    state.tries += 1;
+    if (state.tries === 1) state.firstPick = k;
+    if (k === q.answer) {
+      btn.classList.add("right");
+      lock();
+      state.log.push({ q, firstPick: state.firstPick, result: state.tries === 1 ? "first" : "second" });
+      fb.innerHTML = `<div class="fb ok"><b>${state.tries === 1 ? "答對" : "這次對了"}</b>${esc(q.explain)}</div>${nextBtn()}`;
+      bindNext();
+      return;
+    }
+    btn.classList.add("wrong");
+    btn.disabled = true;
+    if (state.tries === 1) {
+      fb.innerHTML = `<div class="fb hint"><b>提示（針對你選的 ${KEYS[k]}）</b>${esc(q.options[k].hint || "再想一次？")}</div>`;
+      return;
+    }
+    stage.querySelector(`.opt[data-k="${q.answer}"]`).classList.add("right");
+    lock();
+    state.log.push({ q, firstPick: state.firstPick, result: "miss" });
+    fb.innerHTML = `<div class="fb miss"><b>正解是 ${KEYS[q.answer]}：${esc(q.options[q.answer].label)}</b>${esc(q.explain)}</div>${nextBtn()}`;
+    bindNext();
+  };
+
+  const lock = () => stage.querySelectorAll(".opt").forEach((b) => { b.disabled = true; });
+  const nextBtn = () => `<div class="actions"><button class="btn primary" id="next" type="button">${state.i + 1 < state.lesson.questions.length ? "下一題 →" : "看結算"}</button></div>`;
+  const bindNext = () => {
+    const b = document.getElementById("next");
+    b.focus();
+    b.addEventListener("click", () => {
+      state.i += 1;
+      if (state.i < state.lesson.questions.length) renderQuestion(); else renderSummary();
+    });
+  };
+
+  const digPrompt = (lesson, e) => {
+    const q = e.q, picked = q.options[e.firstPick], right = q.options[q.answer];
+    return `我正在搞懂 ${lesson.concept}（${lesson.title}）。
+
+我卡在這個點：${q.concept}
+我原本以為：${picked.label}——${picked.desc}
+但正確的是：${right.label}——${right.desc}
+
+請：
+1. 用一個具體例子講清楚這兩者的差別，例子要有數字或可執行的東西
+2. 指出我這個誤解在什麼情況下會真的害我做錯判斷，給一個實際會遇到的場景
+3. ${q.dig}
+4. 最後出 2 題選擇題追問我，確認我真的搞懂了——先別給答案`;
+  };
+  const upPrompt = (lesson) => `我剛複習完「${lesson.title}」，主題是 ${lesson.concept}，八題都答對了。
+
+請：
+1. 告訴我這個主題往上一層的框架是什麼、它在哪個更大的體系裡是一個特例
+2. 舉一個本堂沒講到、但用同一套推理能解釋的真實系統案例，要有數字
+3. 最後出 2 題選擇題考我這個上一層的觀念——先別給答案`;
+
+  const renderSummary = () => {
+    const { lesson, log } = state;
+    const first = log.filter((e) => e.result === "first");
+    const weak = log.filter((e) => e.result !== "first");
+    const prompt = weak.length ? digPrompt(lesson, weak.find((e) => e.result === "miss") || weak[0]) : upPrompt(lesson);
+    const next = bank.find((c) => c.id === lesson.id + 1);
+    stage.innerHTML = `
+      <div class="card sum">
+        <h2>${esc(lesson.title)} · 結算</h2>
+        <div class="score">${first.length} / ${log.length}</div>
+        <p class="sub">一次答對的題數。第二次才對的也列在「還薄弱」——猜中跟真的懂是兩件事。</p>
+        <h3>已確認懂</h3>
+        ${first.length ? `<ul>${first.map((e) => `<li><b>${esc(e.q.concept)}</b>（${esc(e.q.level)}）</li>`).join("")}</ul>` : "<p>這一輪沒有一次答對的題目。</p>"}
+        <h3>還薄弱</h3>
+        ${weak.length ? `<ul>${weak.map((e) => `<li><b>${esc(e.q.concept)}</b>（${esc(e.q.level)}）：你先選了「${esc(e.q.options[e.firstPick].label)}」${e.result === "miss" ? "，兩次都沒中" : "，第二次才對"}</li>`).join("")}</ul>` : "<p>八題都一次過，可以往下一層。</p>"}
+        <h3>${weak.length ? "深挖 prompt（針對你最卡的那題）" : "往上一層的 prompt"}</h3>
+        <pre class="prompt" id="prompt">${esc(prompt)}</pre>
+        <div class="actions">
+          <button class="btn" id="copy" type="button">複製 prompt</button>
+          <button class="btn" id="again" type="button">重做這堂</button>
+          ${next ? `<button class="btn primary" id="nextc" type="button">下一堂 →</button>` : ""}
+        </div>
+      </div>`;
+    if (stage.getBoundingClientRect().top < 0) stage.scrollIntoView();
+    document.getElementById("copy").addEventListener("click", (ev) => {
+      navigator.clipboard?.writeText(prompt).then(() => { ev.target.textContent = "已複製"; }, () => { ev.target.textContent = "請手動選取複製"; });
+    });
+    document.getElementById("again").addEventListener("click", () => pickClass(lesson.id));
+    if (next) document.getElementById("nextc").addEventListener("click", () => pickClass(next.id));
+  };
+
+  tabs.innerHTML = bank.map((c) => `<button type="button" data-id="${c.id}" aria-pressed="false">第 ${c.id} 堂</button>`).join("");
+  tabs.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => pickClass(+b.dataset.id)));
+  document.addEventListener("keydown", (e) => {
+    const k = KEYS.indexOf(e.key.toUpperCase());
+    const btn = k >= 0 && stage.querySelector(`.opt[data-k="${k}"]:not(:disabled)`);
+    if (btn) btn.click();
+  });
+  pickClass(+new URLSearchParams(location.search).get("class") || 1);
+})();
+</script>
+</body>
+</html>

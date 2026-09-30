@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>推論服務地圖 — 同一批請求，五種模式下的 GPU 時間軸與 HBM 佔用</title>
+<style>
+  :root {
+    --bg: #0E1726; --bg2: #16233A; --bg3: #1C2E4A;
+    --ink: #EAF1FB; --mute: #8FA6C4; --line: #2A3D5C; --foot: #5C7299;
+    --mem: #38BDF8; --comp: #F59E0B; --warn: #FB7185; --good: #34D399; --purp: #A78BFA;
+    --memtint: #10455F; --comptint: #4A3410; --warntint: #4A2433; --goodtint: #123D31; --purptint: #2A2150;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body { background: var(--bg); color: var(--ink); font-family: "PingFang TC", "Noto Sans TC", system-ui, sans-serif; overflow: hidden; user-select: none; }
+  .mono { font-family: Menlo, ui-monospace, monospace; }
+
+  #topbar { display: flex; align-items: center; gap: 14px; padding: 11px 22px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  #crumbs { display: flex; align-items: center; gap: 6px; font-size: 13.5px; flex-wrap: wrap; }
+  .crumb { padding: 4px 11px; border-radius: 8px; cursor: pointer; background: var(--bg2); color: var(--mute); border: 1px solid var(--line); transition: all .15s; }
+  .crumb:hover { color: var(--ink); border-color: var(--mem); }
+  .crumb.active { background: var(--mem); color: var(--bg); font-weight: 700; border-color: var(--mem); }
+  .sep { color: var(--foot); }
+  #hint { margin-left: auto; color: var(--foot); font-size: 11.5px; }
+  #hint kbd { background: var(--bg3); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; font-family: Menlo, monospace; font-size: 10.5px; color: var(--mute); }
+
+  #stage { display: flex; height: calc(100% - 52px); }
+  #canvas { flex: 1; position: relative; overflow: hidden; }
+  .level { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center; gap: 20px; opacity: 0; transform: scale(.96); pointer-events: none; transition: opacity .28s ease, transform .28s ease; padding: 24px 30px; }
+  .level.show { opacity: 1; transform: scale(1); pointer-events: auto; }
+
+  #panel { width: 360px; border-left: 1px solid var(--line); padding: 20px; display: flex; flex-direction: column; gap: 13px; overflow-y: auto; }
+  #panel h2 { font-size: 19px; line-height: 1.25; }
+  #panel h2 .lv { color: var(--mem); font-family: Menlo, monospace; font-size: 12px; display: block; margin-bottom: 3px; }
+  #panel p.desc { color: var(--mute); font-size: 13px; line-height: 1.62; }
+  table.facts { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  table.facts td { padding: 6px 8px; border: 1px solid var(--line); }
+  table.facts td:first-child { color: var(--mute); width: 46%; }
+  table.facts td.v { font-family: Menlo, monospace; color: var(--mem); font-weight: 700; }
+  .teach { background: var(--bg2); border-left: 4px solid var(--comp); border-radius: 6px; padding: 11px 13px; font-size: 12.5px; line-height: 1.6; }
+  .teach b { color: var(--comp); }
+  .caveat { color: var(--foot); font-size: 11px; line-height: 1.55; border-top: 1px dashed var(--line); padding-top: 10px; }
+
+  /* ---------- 區塊標題 ---------- */
+  .secthd { font-size: 13px; font-weight: 700; color: var(--mute); margin-bottom: 8px; display: flex; align-items: baseline; gap: 10px; }
+  .secthd em { font-style: normal; font-size: 11.5px; font-weight: 400; color: var(--foot); }
+  .panelbox { border: 1px solid var(--line); border-radius: 12px; background: var(--bg2); padding: 14px 16px; }
+
+  /* ---------- GPU 時間軸 ---------- */
+  .tl-row { display: flex; align-items: center; gap: 10px; margin-bottom: 5px; }
+  .tl-lab { width: 58px; text-align: right; font-family: Menlo, monospace; font-size: 10.5px; color: var(--foot); flex-shrink: 0; }
+  .tl-bar { flex: 1; display: flex; height: 22px; border-radius: 4px; overflow: hidden; border: 1px solid var(--line); }
+  .tl-bar span { display: flex; align-items: center; justify-content: center; font-family: Menlo, monospace; font-size: 9px; font-weight: 700; color: var(--bg); white-space: nowrap; overflow: hidden; }
+  .seg-idle { background: var(--bg3); color: var(--foot) !important; }
+  .seg-pre  { background: var(--comp); }
+  .seg-dec  { background: var(--mem); }
+  .seg-dec2 { background: var(--good); }
+  .seg-dec3 { background: var(--purp); }
+  .seg-hit  { background: var(--purptint); color: var(--purp) !important; border-right: 1px dashed var(--purp); }
+
+  /* ---------- HBM 佔用條 ---------- */
+  .hbm { display: flex; height: 46px; border-radius: 7px; overflow: hidden; border: 1px solid var(--line); }
+  .hbm span { display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: var(--bg); white-space: nowrap; overflow: hidden; text-align: center; line-height: 1.3; }
+  .h-w { background: var(--foot); }
+  .h-used { background: var(--mem); }
+  .h-waste { background: var(--warntint); color: var(--warn) !important; }
+  .h-free { background: var(--bg3); color: var(--foot) !important; }
+  .hbm-legend { display: flex; gap: 16px; margin-top: 8px; font-size: 11px; color: var(--mute); }
+  .hbm-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+
+  /* ---------- radix tree ---------- */
+  .tree { display: flex; flex-direction: column; align-items: center; gap: 7px; }
+  .node { border: 1.5px solid var(--purp); background: var(--purptint); color: var(--purp); border-radius: 8px; padding: 6px 14px; font-size: 12px; font-weight: 700; }
+  .node.leaf { border-color: var(--mem); background: var(--memtint); color: var(--mem); }
+  .node.leaf2 { border-color: var(--good); background: var(--goodtint); color: var(--good); }
+  .branch { display: flex; gap: 26px; }
+  .edge { color: var(--foot); font-size: 12px; }
+
+  /* ---------- PD 兩群 ---------- */
+  .pd { display: flex; align-items: center; gap: 14px; }
+  .pdgroup { flex: 1; border: 1.5px solid var(--line); border-radius: 12px; padding: 12px 14px; background: var(--bg2); }
+  .pdgroup.pre { border-color: var(--comp); } .pdgroup.dec { border-color: var(--mem); }
+  .pdgroup h4 { font-size: 14px; margin-bottom: 8px; }
+  .pdgroup.pre h4 { color: var(--comp); } .pdgroup.dec h4 { color: var(--mem); }
+  .pdgpus { display: flex; gap: 6px; flex-wrap: wrap; }
+  .pdgpu { width: 40px; height: 30px; border-radius: 5px; border: 1px solid var(--line); background: var(--bg3); font-family: Menlo, monospace; font-size: 9px; color: var(--foot); display: flex; align-items: center; justify-content: center; }
+  .pdgpu.on-pre { background: var(--comptint); border-color: var(--comp); color: var(--comp); }
+  .pdgpu.on-dec { background: var(--memtint); border-color: var(--mem); color: var(--mem); }
+  .pdlink { text-align: center; color: var(--purp); font-size: 11.5px; font-weight: 700; white-space: nowrap; }
+  .pdlink small { display: block; color: var(--foot); font-weight: 400; font-size: 10px; margin-top: 3px; }
+
+  /* ---------- roofline mini ---------- */
+  #roof { width: 100%; height: 132px; }
+  .rf-axis { stroke: var(--line); stroke-width: 1.2; }
+  .rf-mem { stroke: var(--mem); stroke-width: 2; fill: none; }
+  .rf-comp { stroke: var(--comp); stroke-width: 2; fill: none; }
+  .rf-dot { fill: var(--good); transition: cx .45s cubic-bezier(.4,0,.2,1), cy .45s cubic-bezier(.4,0,.2,1); }
+  .rf-lab { fill: var(--foot); font-size: 9px; font-family: Menlo, monospace; }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div id="crumbs"></div>
+  <div id="hint">按 <kbd>1</kbd>–<kbd>5</kbd> 切換模式 · <kbd>←</kbd><kbd>→</kbd> 前後移動</div>
+</div>
+
+<div id="stage">
+  <div id="canvas"></div>
+  <div id="panel">
+    <h2><span class="lv" id="p-lv"></span><span id="p-title"></span></h2>
+    <p class="desc" id="p-desc"></p>
+    <table class="facts"><tbody id="p-facts"></tbody></table>
+    <svg id="roof" viewBox="0 0 320 132" preserveAspectRatio="none">
+      <line class="rf-axis" x1="34" y1="112" x2="308" y2="112"/>
+      <line class="rf-axis" x1="34" y1="112" x2="34" y2="14"/>
+      <line class="rf-mem"  x1="34" y1="112" x2="212" y2="26"/>
+      <line class="rf-comp" x1="212" y1="26" x2="308" y2="26"/>
+      <text class="rf-lab" x="216" y="20">算力上限</text>
+      <text class="rf-lab" x="40" y="70">頻寬限制</text>
+      <text class="rf-lab" x="176" y="124">ridge≈296</text>
+      <text class="rf-lab" x="34" y="124">AI→</text>
+      <circle class="rf-dot" id="rf-dot" cx="38" cy="110" r="5.5"/>
+    </svg>
+    <div class="teach" id="p-teach"></div>
+    <div class="caveat" id="p-caveat"></div>
+  </div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────────────────────
+// 情境設定（教學用示意值，不是 benchmark）
+//   Llama-3-8B fp16 on H100 80GB：權重 16 GB、KV 可用 64 GB
+//   KV 128 KB/token；平均實際用到 2,048 token（256 MB）、但預留 max_len 8,192（1 GB）
+//   H100 ridge point ≈ 296 FLOPs/Byte，decode 的 AI ≈ 有效 batch size
+// ─────────────────────────────────────────────────────────────
+const RIDGE = 296;
+
+const MODES = [
+  {
+    key: "naive", name: "1 Naive", accent: "warn",
+    title: "靜態批次 + 連續預留 KV",
+    desc: "最天真的做法：湊滿一批一起跑、每條請求照 max_seq_len 連續預留 KV 空間。兩個浪費同時發生——時間軸有大片空轉，HBM 有大片預留卻沒用到。",
+    tl: [
+      [[18, "pre", "prefill"], [22, "dec", "R1"], [60, "idle", "空轉（等最慢的那條）"]],
+      [[18, "pre", "prefill"], [38, "dec", "R2"], [44, "idle", "空轉"]],
+      [[18, "pre", "prefill"], [58, "dec", "R3"], [24, "idle", "空轉"]],
+      [[18, "pre", "prefill"], [82, "dec", "R4（2000 token，最慢）"]],
+    ],
+    hbm: [[20, "w", "權重 16 GB"], [20, "used", "KV 實際用到"], [60, "waste", "預留但沒用到（浪費）"]],
+    facts: [["KV 放得下（預留制）", "64 條"], ["批次利用率（duty）", "≈ 30%"], ["有效 batch", "≈ 20"],
+            ["KV 浪費比例", "≈ 75%"], ["算術強度 AI", "≈ 20"], ["算力利用率", "≈ 6.8%"]],
+    ai: 20,
+    teach: "<b>兩個浪費疊在一起。</b>時間軸的空轉來自「整批等最慢的那條」，HBM 的空白來自「不知道會生成多長，只好照最壞情況預留」。注意它們最後都變成同一件事：<b>有效 batch 太小</b>。",
+  },
+  {
+    key: "cont", name: "2 Continuous batching", accent: "comp",
+    title: "排程單位改成「一次 forward」",
+    desc: "誰生完了就立刻退場、佇列有人就立刻補進來（iteration-level scheduling）。時間軸被填滿了——但 KV 還是預留制，放得下的條數沒變。",
+    tl: [
+      [[18, "pre", "prefill"], [22, "dec", "R1"], [8, "pre", "pf"], [30, "dec2", "R5"], [22, "dec3", "R8"]],
+      [[18, "pre", "prefill"], [38, "dec", "R2"], [8, "pre", "pf"], [36, "dec2", "R6"]],
+      [[18, "pre", "prefill"], [58, "dec", "R3"], [8, "pre", "pf"], [16, "dec2", "R7"]],
+      [[18, "pre", "prefill"], [82, "dec", "R4"]],
+    ],
+    hbm: [[20, "w", "權重 16 GB"], [20, "used", "KV 實際用到"], [60, "waste", "預留浪費（沒解決）"]],
+    facts: [["KV 放得下（預留制）", "64 條"], ["批次利用率（duty）", "≈ 95%"], ["有效 batch", "≈ 60"],
+            ["KV 浪費比例", "≈ 75%（未改善）"], ["算術強度 AI", "≈ 60"], ["算力利用率", "≈ 20%"]],
+    ai: 60,
+    teach: "<b>時間軸滿了，但天花板還在。</b>有效 batch 從 20 拉到 60（≈ 3×），卡在「HBM 只放得下 64 條」——所以下一步一定要處理記憶體，光排程救不了。",
+  },
+  {
+    key: "paged", name: "3 Paged KV", accent: "mem",
+    title: "PagedAttention：block 化、用完才要",
+    desc: "KV cache 切成固定大小的 block（16 token 一塊），靠 block table 映射，不需要連續、也不需要預留。同一顆 HBM 突然放得下 4 倍的請求。",
+    tl: [
+      [[10, "pre", "pf"], [22, "dec", "R1"], [6, "pre", "pf"], [26, "dec2", "R5"], [36, "dec3", "R8"]],
+      [[10, "pre", "pf"], [30, "dec", "R2"], [6, "pre", "pf"], [54, "dec2", "R6"]],
+      [[10, "pre", "pf"], [44, "dec", "R3"], [6, "pre", "pf"], [40, "dec2", "R7"]],
+      [[10, "pre", "pf"], [62, "dec", "R4"], [6, "pre", "pf"], [22, "dec3", "R9"]],
+    ],
+    hbm: [[20, "w", "權重 16 GB"], [77, "used", "KV 實際用到（放得下 ~256 條）"], [3, "waste", ""]],
+    facts: [["KV 放得下（分頁）", "≈ 256 條"], ["批次利用率（duty）", "≈ 95%"], ["有效 batch", "≈ 240"],
+            ["KV 浪費比例", "< 4%"], ["算術強度 AI", "≈ 240"], ["算力利用率", "≈ 81%"]],
+    ai: 240,
+    teach: "<b>這一步的跳躍最大。</b>浪費從 75% 掉到 <4%，可容納請求數 ×4，有效 batch 直接把 roofline 上的點推到接近 ridge point。<b>記憶體管理才是 batch size 的真正瓶頸。</b>",
+  },
+  {
+    key: "radix", name: "4 Radix 前綴共用", accent: "purp",
+    title: "RadixAttention / prefix caching",
+    desc: "共用同一段 system prompt、同一份 RAG 文件、同一串對話歷史的請求，KV block 直接複用——那段 prefill 根本不用算。時間軸上淺色的部分就是「省下來的計算」。",
+    tl: [
+      [[26, "hit", "前綴命中（不用算）"], [6, "pre", "pf"], [26, "dec", "R1"], [42, "dec2", "R5"]],
+      [[26, "hit", "前綴命中"], [6, "pre", "pf"], [38, "dec", "R2"], [30, "dec2", "R6"]],
+      [[26, "hit", "前綴命中"], [6, "pre", "pf"], [30, "dec", "R3"], [38, "dec3", "R7"]],
+      [[10, "pre", "pf（新前綴）"], [56, "dec", "R4"], [34, "dec2", "R9"]],
+    ],
+    tree: true,
+    hbm: [[20, "w", "權重 16 GB"], [72, "used", "KV（共用前綴只存一份）"], [8, "free", "空閒"]],
+    facts: [["前綴共用比例", "≈ 70%（agent／多輪）"], ["省下的 prefill", "≈ 60%"], ["有效 batch", "≈ 240"],
+            ["TTFT", "↓ 20–40%"], ["算術強度 AI", "≈ 240"], ["算力利用率", "≈ 81%（吞吐再 +30%）"]],
+    ai: 240,
+    teach: "<b>這一招不提高利用率，而是「減少總工作量」。</b>AI 沒變，但同樣的 GPU 時間服務了更多請求、TTFT 也掉下來。<b>共用比例高不高，決定 vLLM 與 SGLang 的差距是 5% 還是 40%。</b>",
+  },
+  {
+    key: "pd", name: "5 PD 分離", accent: "good",
+    title: "Prefill / Decode 分家",
+    desc: "prefill 是 compute-bound、decode 是 memory-bound，最佳配置根本不同 → 拆成兩群機器，中間傳 KV cache。prefill 不再打斷 decode，decode 群可以把 batch 開到更大。",
+    pd: true,
+    tl: [
+      [[100, "pre", "Prefill 群：連續處理 prompt（大 TP，追 FLOPs 利用率）"]],
+      [[34, "dec", "Decode 群：batch 320"], [33, "dec2", "batch 320"], [33, "dec3", "batch 320（ITL 穩定，不被 prefill 打斷）"]],
+    ],
+    hbm: [[20, "w", "權重 16 GB"], [76, "used", "KV（decode 群專心裝 KV）"], [4, "free", ""]],
+    facts: [["有效 batch（decode 群）", "≈ 320"], ["ITL 抖動", "幾乎消除"], ["KV 浪費比例", "< 4%"],
+            ["算術強度 AI", "≈ 320 → 超過 ridge"], ["算力利用率", "≈ 100%（轉為 compute-bound）"], ["新成本", "KV 跨機器傳輸"]],
+    ai: 330,
+    teach: "<b>終點：decode 終於變成 compute-bound。</b>從第一格的 6.8% 到這裡的 ~100%，同一份權重、同一批卡。代價是 KV 要跨機器搬——<b>走 NVLink 域內還是 IB，直接決定這招划不划算（第二堂的通訊階梯）。</b>",
+  },
+];
+
+const CAVEAT = "數值為教學用示意值（Llama-3-8B fp16、H100 80GB、KV 128 KB/token、平均用 2K／預留 8K token 推算），用來展示「有效 batch → 算術強度 → 利用率」的因果鏈，不是任何框架的 benchmark 結果。";
+
+// ─────────────────────────────────────────────────────────────
+const canvas = document.getElementById("canvas");
+const crumbs = document.getElementById("crumbs");
+let cur = 0;
+
+function el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
+
+function buildTimeline(m) {
+  const box = el("div", "panelbox");
+  box.appendChild(el("div", "secthd", "GPU 時間軸 <em>每一列是一個執行槽；灰色＝空轉，橘＝prefill，藍/綠/紫＝不同請求的 decode</em>"));
+  m.tl.forEach((segs, i) => {
+    const row = el("div", "tl-row");
+    row.appendChild(el("div", "tl-lab", m.pd ? (i === 0 ? "P 群" : "D 群") : "slot " + (i + 1)));
+    const bar = el("div", "tl-bar");
+    segs.forEach(([w, kind, txt]) => {
+      const sp = el("span", "seg-" + kind, txt || "");
+      sp.style.flex = w;
+      bar.appendChild(sp);
+    });
+    row.appendChild(bar);
+    box.appendChild(row);
+  });
+  return box;
+}
+
+function buildHBM(m) {
+  const box = el("div", "panelbox");
+  box.appendChild(el("div", "secthd", "HBM 佔用（80 GB） <em>權重 16 GB 固定，剩下 64 GB 全是 KV cache 的戰場</em>"));
+  const bar = el("div", "hbm");
+  m.hbm.forEach(([w, kind, txt]) => {
+    const sp = el("span", "h-" + kind, txt || "");
+    sp.style.flex = w;
+    bar.appendChild(sp);
+  });
+  box.appendChild(bar);
+  box.appendChild(el("div", "hbm-legend",
+    '<span><i style="background:var(--foot)"></i>權重</span>' +
+    '<span><i style="background:var(--mem)"></i>KV 實際用到</span>' +
+    '<span><i style="background:var(--warntint);border:1px solid var(--warn)"></i>預留但沒用到</span>' +
+    '<span><i style="background:var(--bg3)"></i>空閒</span>'));
+  return box;
+}
+
+function buildTree() {
+  const box = el("div", "panelbox");
+  box.appendChild(el("div", "secthd", "Radix tree <em>鍵＝token 序列；命中的節點直接複用 KV block，只 prefill 新增的那一段</em>"));
+  const tree = el("div", "tree");
+  tree.appendChild(el("div", "node", "共用 system prompt（2,000 token）"));
+  tree.appendChild(el("div", "edge", "▼"));
+  const br = el("div", "branch");
+  br.appendChild(el("div", "node leaf", "對話 A · 歷史"));
+  br.appendChild(el("div", "node leaf2", "對話 B · 歷史"));
+  br.appendChild(el("div", "node leaf", "RAG 文件 X"));
+  tree.appendChild(br);
+  tree.appendChild(el("div", "edge", "▼ 每一輪只算新增的那幾百個 token"));
+  box.appendChild(tree);
+  return box;
+}
+
+function buildPD() {
+  const box = el("div", "panelbox");
+  box.appendChild(el("div", "secthd", "兩群機器 <em>各自調到自己的最佳操作點，中間只傳 KV cache</em>"));
+  const pd = el("div", "pd");
+  const g1 = el("div", "pdgroup pre", "<h4>Prefill 群 · compute-bound</h4>");
+  const gp1 = el("div", "pdgpus");
+  for (let i = 0; i < 8; i++) gp1.appendChild(el("div", "pdgpu on-pre", "TP" + i));
+  g1.appendChild(gp1);
+  const g2 = el("div", "pdgroup dec", "<h4>Decode 群 · memory-bound</h4>");
+  const gp2 = el("div", "pdgpus");
+  for (let i = 0; i < 16; i++) gp2.appendChild(el("div", "pdgpu on-dec", "EP" + i));
+  g2.appendChild(gp2);
+  pd.appendChild(g1);
+  pd.appendChild(el("div", "pdlink", "KV cache →<small>NVLink / RDMA</small>"));
+  pd.appendChild(g2);
+  box.appendChild(pd);
+  return box;
+}
+
+MODES.forEach((m, i) => {
+  const lv = el("div", "level");
+  lv.id = "lv-" + i;
+  if (m.tree) lv.appendChild(buildTree());
+  if (m.pd) lv.appendChild(buildPD());
+  lv.appendChild(buildTimeline(m));
+  lv.appendChild(buildHBM(m));
+  canvas.appendChild(lv);
+
+  const c = el("div", "crumb", m.name);
+  c.onclick = () => go(i);
+  crumbs.appendChild(c);
+  if (i < MODES.length - 1) crumbs.appendChild(el("span", "sep", "›"));
+});
+
+// roofline 的點：x 隨 log(AI) 走，y 沿著斜邊爬、超過 ridge 就貼屋頂
+function placeDot(ai) {
+  const X0 = 34, XR = 212, XMAX = 308, Y0 = 112, YR = 26;
+  const t = Math.min(1, Math.log10(Math.max(ai, 1)) / Math.log10(RIDGE));
+  let x, y;
+  if (ai <= RIDGE) { x = X0 + (XR - X0) * t; y = Y0 + (YR - Y0) * t; }
+  else { x = XR + (XMAX - XR) * Math.min(1, (ai - RIDGE) / RIDGE); y = YR; }
+  const dot = document.getElementById("rf-dot");
+  dot.setAttribute("cx", x.toFixed(1));
+  dot.setAttribute("cy", y.toFixed(1));
+  dot.setAttribute("fill", ai >= RIDGE ? "var(--comp)" : ai > 100 ? "var(--good)" : ai > 30 ? "var(--mem)" : "var(--warn)");
+}
+
+function go(i) {
+  cur = (i + MODES.length) % MODES.length;
+  const m = MODES[cur];
+  MODES.forEach((_, k) => document.getElementById("lv-" + k).classList.toggle("show", k === cur));
+  [...crumbs.querySelectorAll(".crumb")].forEach((c, k) => {
+    c.classList.toggle("active", k === cur);
+    c.style.background = k === cur ? "var(--" + m.accent + ")" : "";
+    c.style.borderColor = k === cur ? "var(--" + m.accent + ")" : "";
+  });
+  document.getElementById("p-lv").textContent = "模式 " + (cur + 1) + " / " + MODES.length;
+  document.getElementById("p-title").textContent = m.title;
+  document.getElementById("p-desc").textContent = m.desc;
+  document.getElementById("p-facts").innerHTML = m.facts
+    .map(([k, v]) => "<tr><td>" + k + "</td><td class='v' style='color:var(--" + m.accent + ")'>" + v + "</td></tr>").join("");
+  const teach = document.getElementById("p-teach");
+  teach.innerHTML = m.teach;
+  teach.style.borderLeftColor = "var(--" + m.accent + ")";
+  document.getElementById("p-caveat").textContent = CAVEAT;
+  placeDot(m.ai);
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.key >= "1" && e.key <= String(MODES.length)) go(parseInt(e.key, 10) - 1);
+  else if (e.key === "ArrowRight") go(cur + 1);
+  else if (e.key === "ArrowLeft") go(cur - 1);
+});
+
+go(0);
+</script>
+</body>
+</html>
