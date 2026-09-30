@@ -6,7 +6,6 @@ notes, diagrams, papers, references, and examples.
 ## Topics
 
 - [AI Infrastructure](./ai-infrastructure/)
-  - [GPU Memory Reading Club](./ai-infrastructure/gpu-memory-reading-club/) — GPU memory and data movement, from one card to a rack
 - [Computer Vision](./computer-vision/)
 - [Reinforcement Learning](./reinforcement-learning/)
 
