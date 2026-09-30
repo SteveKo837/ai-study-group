@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hybrid (Parameterized) Action Space RL：從電池調控談 P-DQN、H-PPO 與 HyAR</title>
+<script>
+MathJax = { tex: { inlineMath: [['\\(','\\)']], displayMath: [['$$','$$']] } };
+</script>
+<script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
+<style>
+  :root {
+    --ink: #1f2937;
+    --muted: #6b7280;
+    --bg: #f8f9fb;
+    --card: #ffffff;
+    --line: #e5e7eb;
+    --accent: #2563eb;
+    --pdqn: #0e7490;
+    --hppo: #b45309;
+    --hyar: #7c3aed;
+    --good: #059669;
+    --bad: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0 16px 80px;
+    font-family: "Helvetica Neue", Arial, "PingFang TC", "Microsoft JhengHei", sans-serif;
+    background: var(--bg); color: var(--ink);
+    line-height: 1.75; font-size: 16px;
+  }
+  main { max-width: 920px; margin: 0 auto; }
+  header.hero {
+    max-width: 920px; margin: 0 auto; padding: 56px 8px 24px;
+  }
+  header.hero h1 { font-size: 1.9em; line-height: 1.35; margin: 0 0 8px; }
+  header.hero .subtitle { color: var(--muted); font-size: 1.05em; }
+  section {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 28px 32px; margin: 24px 0;
+  }
+  h2 { font-size: 1.45em; margin: 0 0 16px; padding-bottom: 10px; border-bottom: 2px solid var(--line); }
+  h3 { font-size: 1.15em; margin: 28px 0 8px; }
+  h4 { font-size: 1.0em; margin: 20px 0 6px; }
+  p { margin: 10px 0; }
+  code { background: #eef2f7; border-radius: 4px; padding: 1px 6px; font-size: 0.9em; }
+  .tag {
+    display: inline-block; font-size: 0.75em; font-weight: 700; color: #fff;
+    border-radius: 999px; padding: 2px 12px; vertical-align: middle; margin-left: 8px;
+  }
+  .tag.pdqn { background: var(--pdqn); }
+  .tag.hppo { background: var(--hppo); }
+  .tag.hyar { background: var(--hyar); }
+  .paper-meta { color: var(--muted); font-size: 0.9em; margin: -6px 0 18px; }
+  table { border-collapse: collapse; width: 100%; margin: 14px 0; font-size: 0.93em; }
+  th, td { border: 1px solid var(--line); padding: 8px 12px; text-align: left; vertical-align: top; }
+  th { background: #f1f5f9; font-weight: 700; }
+  .center { text-align: center; }
+  .ok { color: var(--good); font-weight: 700; }
+  .no { color: var(--bad); font-weight: 700; }
+  .scroll { overflow-x: auto; }
+  .callout {
+    border-left: 4px solid var(--accent); background: #eff6ff;
+    border-radius: 0 8px 8px 0; padding: 12px 18px; margin: 16px 0;
+  }
+  .callout.warn { border-color: #d97706; background: #fffbeb; }
+  .callout.key  { border-color: var(--hyar); background: #f5f3ff; }
+  .flow {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    margin: 14px 0; font-size: 0.9em;
+  }
+  .flow .box {
+    border: 1.5px solid var(--accent); border-radius: 8px; padding: 6px 14px;
+    background: #f0f6ff; white-space: nowrap;
+  }
+  .flow .box.alt { border-color: var(--hyar); background: #f7f4ff; }
+  .flow .arrow { color: var(--muted); font-weight: 700; }
+  ol li, ul li { margin: 6px 0; }
+  .toc { font-size: 0.95em; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  footer { max-width: 920px; margin: 32px auto 0; color: var(--muted); font-size: 0.85em; padding: 0 8px; }
+  .refs li { font-size: 0.92em; margin: 8px 0; }
+  .topnav { position: sticky; top: 0; z-index: 50; display: flex; gap: 6px; overflow-x: auto;
+    padding: 10px 8px; background: var(--bg); border-bottom: 1px solid var(--line);
+    max-width: 952px; margin: 0 auto; }
+  .topnav a { white-space: nowrap; padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line);
+    color: var(--muted); text-decoration: none; font-size: 0.85em; background: var(--card); }
+  .topnav a.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .topnav a:focus-visible { outline: 2px solid var(--accent); }
+  body.paged main > section { display: none; }
+  body.paged main > section.active { display: block; }
+  .pager { max-width: 920px; margin: 8px auto 40px; display: flex; justify-content: space-between;
+    align-items: center; gap: 12px; padding: 0 8px; }
+  .pager a { color: var(--accent); text-decoration: none; padding: 10px 16px; border: 1px solid var(--line);
+    border-radius: 8px; background: var(--card); }
+  .pager a.hidden { visibility: hidden; }
+  .pager .pos { color: var(--muted); font-size: 0.9em; }
+  @media print {
+    .topnav, .pager { display: none; }
+    body.paged main > section { display: block; }
+  }
+  .fig { margin: 18px 0 22px; text-align: center; }
+  .fig img { max-width: 100%; height: auto; background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+  .figcap { color: var(--muted); font-size: 0.85em; margin-top: 8px; line-height: 1.6; text-align: center; }
+  @media print {
+    body { background: #fff; }
+    section { border: none; page-break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <h1>Hybrid (Parameterized) Action Space 強化學習</h1>
+  <div class="subtitle">從電池調控的動作空間設計出發 —— 深入 P-DQN、H-PPO 與 HyAR 三篇代表性方法</div>
+</header>
+
+<nav class="topnav" id="topnav" aria-label="section navigation"></nav>
+
+<main>
+
+<section class="toc" id="toc">
+  <h2>目錄</h2>
+  <ol>
+    <li><a href="#motivation">緣起：電池調控的 action space 該怎麼設計？</a></li>
+    <li><a href="#modeling">前置知識：discrete / continuous action 的建模方式</a></li>
+    <li><a href="#problem">問題定義：Parameterized Action MDP (PAMDP)</a></li>
+    <li><a href="#landscape">方法版圖：四條路線一張圖</a></li>
+    <li><a href="#pdqn">P-DQN：value-based 的混合動作學習</a></li>
+    <li><a href="#hppo">H-PPO：雙 actor 的 on-policy 解法</a></li>
+    <li><a href="#hyar">HyAR：把混合動作壓進 latent space（重點）</a></li>
+    <li><a href="#compare">三方法總比較</a></li>
+    <li><a href="#refs">參考文獻</a></li>
+  </ol>
+</section>
+
+<section id="motivation">
+  <h2>1. 緣起：電池調控的 action space 該怎麼設計？</h2>
+  <p>我們的場景是<strong>電池儲能調控</strong>：每個決策時點，agent 要決定電池「充電、放電、或 idle」，以及充放的功率大小。同一件事，至少有三種動作空間的建模方式：</p>
+
+  <div class="fig">
+  <svg viewBox="0 0 720 175" role="img" aria-label="Battery hybrid action diagram" style="max-width:640px;width:100%;height:auto">
+    <g>
+      <circle cx="360" cy="36" r="21" fill="none" stroke="var(--muted)" stroke-width="2" stroke-dasharray="4 4"/>
+      <rect x="352" y="27" width="6" height="18" rx="1.5" fill="var(--muted)"/>
+      <rect x="362" y="27" width="6" height="18" rx="1.5" fill="var(--muted)"/>
+      <text x="390" y="41" font-size="14" fill="var(--muted)">idle</text>
+      <line x1="360" y1="57" x2="360" y2="86" stroke="var(--muted)" stroke-width="2" stroke-dasharray="4 4"/>
+    </g>
+    <rect x="285" y="90" width="150" height="70" rx="10" fill="var(--card)" stroke="var(--ink)" stroke-width="3"/>
+    <rect x="435" y="110" width="13" height="30" rx="3" fill="var(--ink)"/>
+    <rect x="297" y="100" width="30" height="50" rx="4" fill="var(--good)"/>
+    <rect x="333" y="100" width="30" height="50" rx="4" fill="var(--good)" opacity="0.55"/>
+    <rect x="369" y="100" width="30" height="50" rx="4" fill="var(--good)" opacity="0.25"/>
+    <line x1="100" y1="125" x2="255" y2="125" stroke="var(--good)" stroke-width="4"/>
+    <polygon points="255,115 276,125 255,135" fill="var(--good)"/>
+    <text x="100" y="103" font-size="14" fill="var(--good)" font-weight="700">充電</text>
+    <line x1="463" y1="125" x2="598" y2="125" stroke="var(--hppo)" stroke-width="4"/>
+    <polygon points="598,115 619,125 598,135" fill="var(--hppo)"/>
+    <text x="463" y="103" font-size="14" fill="var(--hppo)" font-weight="700">放電</text>
+  </svg>
+  </div>
+
+
+  <div class="scroll">
+  <table>
+    <tr>
+      <th style="width:22%">建模方式</th>
+      <th style="width:38%">定義</th>
+      <th>優點 / 問題</th>
+    </tr>
+    <tr>
+      <td><strong>① 純 continuous</strong></td>
+      <td>\(a \in [-1, 1]\)：正值 = 充電功率、負值 = 放電功率、0 = idle</td>
+      <td>最簡單，任何 continuous RL（DDPG/TD3/SAC/PPO）直接可用。但 <strong>idle 沒有明確語意</strong>——Gaussian policy 幾乎不可能精確輸出 0，會在 0 附近抖動，造成頻繁的微量充放電（傷電池壽命、觸發不必要的轉換損耗）；「要不要動作」和「動多大」兩個決策被壓在同一個軸上。</td>
+    </tr>
+    <tr>
+      <td><strong>② 純 discrete</strong></td>
+      <td>把 \([-1,1]\) 切成 \(N\) 格，例如 \(\{-1, -0.75, \dots, 0.75, 1\}\)</td>
+      <td>DQN 系列直接可用，idle（=0）是明確的一格。但<strong>精度與動作數是硬取捨</strong>：切太粗控制不精細，切太細動作數爆炸、又丟掉了「相鄰功率效果相近」的連續結構，泛化差。</td>
+    </tr>
+    <tr>
+      <td><strong>③ Hybrid（parameterized）</strong></td>
+      <td>discrete \(k \in \{\text{充電}, \text{放電}, \text{idle}\}\)；選了充/放電後再給 continuous 參數 \(x_k \in [0,1]\)（功率量值）</td>
+      <td><strong>語意最乾淨</strong>：模式選擇與功率大小解耦，idle 是一個明確的離散動作、不帶參數；功率保有連續精度。代價是：標準 RL 演算法無法直接處理這種「離散 + 連續」混合的動作空間——這正是本報告要探討的問題。</td>
+    </tr>
+  </table>
+  </div>
+
+    <h3>落到網路輸出上：一共 5 維</h3>
+  <p>以方案③把我們的問題具體化，policy 網路的輸出就是 <strong>5 維</strong>——3 維給離散、2 維給連續：</p>
+  <div class="flow">
+    <span class="box">3 維：discrete logits → softmax 選 \(k \in\) {充電, 放電, idle}</span>
+    <span class="arrow">+</span>
+    <span style="flex-basis:100%"></span>
+    <span class="box">1 維：充電量值 \(x_{充} \in [0,1]\)</span>
+    <span class="arrow">+</span>
+    <span class="box">1 維：放電量值 \(x_{放} \in [0,1]\)</span>
+  </div>
+  
+
+  
+</section>
+
+<section id="modeling">
+  <h2>2. 前置知識：RL 是怎麼建模 discrete / continuous action 的？</h2>
+  <p>進入各方法前，先把最基本的事講清楚：policy network 到底怎麼「輸出一個動作」？共同模式是——<strong>網路不直接輸出動作，而是輸出一個機率分佈的參數，動作再從這個分佈抽樣（或取最大）</strong>。離散與連續的差別，就在於用什麼分佈。</p>
+
+  <h3>2.1 Discrete</h3>
+  <p><strong>Policy-based</strong>：網路輸出 \(K\) 維 logits，過 softmax 得到各動作的機率（Categorical distribution），動作從中抽樣；探索由抽樣的隨機性天然提供：</p>
+  $$\pi_\theta(k \mid s) \;=\; \mathrm{softmax}\bigl(f_\theta(s)\bigr)_k \;=\; \frac{e^{f_k(s)}}{\sum_{j=1}^{K} e^{f_j(s)}}$$
+  <p><strong>Q-learning</strong>：網路輸出每個動作的 Q 值，選 Q 值最大的動作 \(k^* = \arg\max_k Q(s, k)\)（DQN），探索靠 \(\epsilon\)-greedy。</p>
+  <p>兩條路都依賴同一個前提——<strong>動作數有限、可枚舉</strong>。</p>
+
+  <h3>2.2 Continuous</h3>
+  <p><strong>Policy-based</strong>：網路輸出動作每一維的 mean \(\mu_\theta(s)\) 與 std \(\sigma_\theta(s)\)，動作從分佈中抽樣（通常是 Normal）：</p>
+  $$x \;\sim\; \mathcal{N}\bigl(\mu_\theta(s),\, \sigma_\theta(s)^2\bigr)$$
+  <p>如果動作是有界的，可以把抽出的值 clip 回合法範圍，或改用有界的分佈——像 squashed Normal（−1~1）或 Beta 分佈（0~1）。</p>
+  <p><strong>Q-learning</strong>：不能直接對連續動作取 \(\arg\max\)——動作無法枚舉，也沒有 actor 可以直接輸出動作。要走這條路得採用 <strong>DDPG</strong>（加一個 deterministic actor \(x = \mu_\theta(s)\) 把 argmax「學」出來，靠 \(\nabla_x Q(s,x)\) 更新）或 <strong>NAF</strong>（把 Q 對動作限制成二次型，argmax 有解析解）。</p>
+
+  <h3>2.3 兩種頭都要 → 三篇論文各自的拼法</h3>
+  <p>混合動作空間的困境到此明朗：<strong>softmax 頭給不出連續值，Gaussian 頭給不出無序的離散類別</strong>。後面三篇論文，本質上就是三種「把兩種頭組合起來」的方式：</p>
+  <div class="scroll">
+  <table>
+    <tr><th style="width:16%">方法</th><th>離散部分的建模</th><th>連續部分的建模</th></tr>
+    <tr><td><strong>P-DQN</strong></td><td>\(K\) 個 Q 值 + \(\arg\max_k\)（§2.1 的 Q-learning 路線）</td><td>deterministic actor（§2.2 的 Q-learning／DDPG 路線）</td></tr>
+    <tr><td><strong>H-PPO</strong></td><td>softmax / Categorical（§2.1 的 policy-based 路線）</td><td>Gaussian mean/std（§2.2 的 policy-based 路線）</td></tr>
+    <tr><td><strong>HyAR</strong></td><td>latent 向量 → embedding table 最近鄰</td><td>latent 向量 → VAE decoder</td></tr>
+  </table>
+  </div>
+  <div class="callout">
+    <strong>一句話定位：</strong>H-PPO 是「§2.1 + §2.2 的 policy-based 頭各拿一份、共用 encoder 與 critic」的直白組合；P-DQN 是「DQN 頭 + DDPG 頭」的 value-based 混血；HyAR 則跳出拼頭思維——policy 只有一個 deterministic 連續頭（TD3），離散與連續都靠 latent 空間解碼還原。
+  </div>
+</section>
+
+<section id="problem">
+  <h2>3. 問題定義：Parameterized Action MDP (PAMDP)</h2>
+  <p>沿用 Masson et al. (2016) 的形式化：離散動作集合 \(\mathcal{K} = \{1, \dots, K\}\)，每個離散動作 \(k\) 帶一個自己的連續參數空間 \(\mathcal{X}_k \subseteq \mathbb{R}^{m_k}\)。完整的混合動作空間為：</p>
+  $$\mathcal{A} \;=\; \bigl\{\, (k, x_k) \;\bigm|\; x_k \in \mathcal{X}_k,\; k \in \mathcal{K} \,\bigr\}$$
+  <p>以此為動作空間的 MDP 稱為 <strong>PAMDP</strong>。以 RoboCup 2D 足球的 Half Field Offense（HFO，P-DQN 與 H-PPO 的實驗環境）為例：\(K = 3\)，動作為 <code>Dash(power, direction)</code>、<code>Turn(direction)</code>、<code>Kick(power, direction)</code>——Dash 和 Kick 的參數空間是二維（功率＋方向）、Turn 是一維（方向），每個離散動作各自帶著維度不同的連續參數。</p>
+  <p>文獻中常見的 benchmark 也都是這個結構：Platform、Goal、Catch Point（HyAR 與 H-PPO 的實驗環境），以及 MOBA 遊戲（王者榮耀）的技能施放（P-DQN 的實驗）等。</p>
+
+  
+</section>
+
+<section id="landscape">
+  <h2>4. 方法版圖：四條路線</h2>
+  <div class="scroll">
+  <table>
+    <tr><th style="width:24%">路線</th><th style="width:30%">代表方法</th><th>一句話</th></tr>
+    <tr>
+      <td>把連續離散化</td>
+      <td>DQN + discretization (Sherstov &amp; Stone 2005)</td>
+      <td>丟精度、動作數爆炸。H-PPO 實驗中 HFO 場景即使每參數只切 8 方向 × 6 檔功率，動作數就上看 \(10^4\)。</td>
+    </tr>
+    <tr>
+      <td>把離散連續化（relaxation）</td>
+      <td>PA-DDPG (Hausknecht &amp; Stone, ICLR 2016)</td>
+      <td>actor 一次輸出「每個離散動作一個分數 \(f_{1:K}\)」+「所有連續參數 \(x_{1:K}\)」，用 argmax/softmax 選離散動作，整包當 continuous 空間跑 DDPG。放大了動作空間複雜度，後續論文實測皆不穩定。</td>
+    </tr>
+    <tr>
+      <td>為混合結構特製演算法</td>
+      <td><strong>P-DQN</strong>（value-based, off-policy）、<strong>H-PPO</strong>（policy-based, on-policy）、Q-PAMDP、HHQN（階層式）</td>
+      <td>直接在網路架構上同時放離散頭與連續頭，各自用適合的方式更新。</td>
+    </tr>
+    <tr>
+      <td>表徵學習（representation）</td>
+      <td><strong>HyAR</strong> (ICLR 2022)</td>
+      <td>不改演算法、改動作空間本身：把 \((k, x_k)\) 編碼進一個緊緻的連續 latent space，在裡面跑標準 TD3，動作再解碼回去執行。</td>
+    </tr>
+  </table>
+  </div>
+
+  
+</section>
+
+<section id="pdqn">
+  <h2>5. P-DQN（arXiv 2018）<span class="tag pdqn">value-based · off-policy</span></h2>
+  <p class="paper-meta">Xiong et al. (Tencent AI Lab), <em>Parametrized Deep Q-Networks Learning: RL with Discrete-Continuous Hybrid Action Space</em>, arXiv:1810.06394</p>
+
+    <h3>前情提要：DQN 與 DDPG 各自怎麼運作？</h3>
+  <p>P-DQN 是這兩者的組合，先看它們的差別。<strong>DQN</strong>：Q 網路吃 \(s, a\)、吐一個 scalar 的 Q 值；因為動作是有限的離散集合，決策時把每個 \(a\) 都評分一遍、取 \(\arg\max\) 即可：</p>
+  <div class="fig"><img src="assets/dqn-concept.png" alt="DQN concept" style="max-width:640px"><div class="figcap">DQN：左——Q 網路吃 (s, a)、輸出一個 scalar 的 Q 值；右——實務上更常見的形式：只吃 s、一次輸出所有離散動作的 Q 值（僅適用於離散動作），取 argmax 決策。</div></div>
+  <p><strong>DDPG</strong>：連續動作無法枚舉，argmax 做不到。於是多加一個 actor \(\pi\)：吃 \(s\)、直接輸出連續動作 \(a\)，接到 Q 網路後整體可視為一個大網路——更新 actor 時就是固定 Q、沿著讓 \(Q^\pi(s,a)\) 變大的方向調 \(\pi\)（把 argmax「學」出來）：</p>
+  <div class="fig"><img src="assets/ddpg-concept.png" alt="DDPG concept" style="max-width:560px"><div class="figcap">DDPG：actor 輸出連續動作接進 Q 網路，合起來是一個大網路，actor 朝 Q 值上升的方向更新。</div></div>
+  <p>混合動作空間剛好是「離散的 \(k\)（DQN 擅長）＋ 連續的 \(x_k\)（DDPG 擅長）」——P-DQN 就是把兩者拼起來。</p>
+
+  <h3>核心想法：DQN 與 DDPG 的混血</h3>
+  <p>先回顧一般（離散動作）的 Bellman optimality equation——DQN 的基礎（其 Eq. 2.1）：</p>
+  $$Q(s, a) = \mathbb{E}_{r_t,\, s_{t+1}}\Bigl[\, r_t + \gamma \max_{a' \in \mathcal{A}} Q(s_{t+1}, a') \,\Bigm|\, s_t = s,\; a_t = a \Bigr]$$
+  <p>動作有限時，右邊的 \(\max_{a'}\) 把每個動作的 Q 值都算一遍取最大即可。把動作換成混合動作 \((k, x_k)\)，同一條式子就變成（其 Eq. 3.1）：</p>
+  $$Q(s_t, k_t, x_{k_t}) = \mathbb{E}\Bigl[\, r_t + \gamma \max_{k \in [K]} \; \underbrace{\sup_{x_k \in \mathcal{X}_k} Q(s_{t+1}, k, x_k)}_{\text{連續部分的 sup 難算}} \,\Bigr]$$
+  <p>外層對 \(K\) 個離散動作取 max 很便宜，麻煩在內層對連續參數取 sup。P-DQN 的解法：<strong>用一個 deterministic actor 網路 \(x_k(s;\theta)\) 去近似這個 argsup</strong>（就像 DDPG 的 actor 近似連續 argmax）：</p>
+  $$Q\bigl(s, k, x_k(s;\theta); \omega\bigr) \;\approx\; \sup_{x_k \in \mathcal{X}_k} Q(s, k, x_k; \omega)$$
+  <p>於是 Bellman equation 退化回「有限 \(K\) 個動作的 DQN」形式，兩個網路、兩個 loss（其 Eq. 3.4）：</p>
+  $$\ell^Q(\omega) = \tfrac{1}{2}\bigl[\,Q(s_t, k_t, x_{k_t}; \omega) - y_t\,\bigr]^2
+  \qquad
+  \ell^\Theta(\theta) = -\sum_{k=1}^{K} Q\bigl(s_t, k, x_k(s_t;\theta); \omega_t\bigr)$$
+  <p>其中 \(y_t\) 是（n-step）TD target。</p>
+
+  <h3>動作選擇</h3>
+  <div class="flow">
+    <span class="box">state \(s\)</span><span class="arrow">→</span>
+    <span class="box">actor：輸出所有 \(x_1, \dots, x_K\)</span><span class="arrow">→</span>
+    <span class="box">Q 網路：算 \(Q(s, k, x_k)\), \(k = 1..K\)</span><span class="arrow">→</span>
+    <span class="box">\(k^* = \arg\max_k Q\)，執行 \((k^*, x_{k^*})\)</span>
+  </div>
+  <p>探索用 \(\epsilon\)-greedy（以機率 \(\epsilon\) 在整個混合空間均勻抽），也可對連續部分加 DDPG 式雜訊。角度類參數用 \((\cos\alpha, \sin\alpha)\) 表示以避開週期性問題；參數越界用平方懲罰處理。</p>
+
+  <div class="fig"><img src="assets/pdqn-pa-ddpg-architecture.png" alt="P-DQN（左）與 PA-DDPG relaxation（右）的網路結構對比"><div class="figcap">P-DQN（左）與 PA-DDPG relaxation（右）的網路結構對比：P-DQN 以 \(\arg\max_k Q\) 明確選離散動作；DDPG 式作法則用連續分數 \(f\) 鬆弛離散選擇。圖片來源：P-DQN 論文 Fig. 1。</div></div>
+  <h3>P-DQN 自述的優勢</h3>
+  <ol>
+    <li>不對動作空間做任何近似或 relaxation（對比 PA-DDPG）。</li>
+    <li><strong>off-policy + deterministic 連續策略</strong> → 可用 replay buffer，樣本效率高（對比 on-policy 的 Q-PAMDP / H-PPO）。</li>
+    <li>離散選擇是明確的 \(\arg\max_k Q\)，可以直接吃人類示範資料（示範裡只有 \(k\)，沒有 relaxation 需要的分數 \(f\)）。</li>
+  </ol>
+
+  <h3>實驗</h3>
+  <ul>
+    <li><strong>HFO 射門</strong>：進球率 0.98–0.997、平均步數 78–88，同時優於 PA-DDPG（0.80–1.00 / 105–119 步）與 SARSA baseline；訓練成本約 1 小時 CPU（PA-DDPG 要 3 天 GPU）。</li>
+    <li><strong>王者榮耀 1v1（魯班 solo）</strong>：179 維手工特徵、6 個離散動作（移動(α)、普攻、三個技能(位置/方向)、回城），48 worker 非同步訓練，學習速度遠快於 PA-DDPG，能穩定打贏內建 AI。</li>
+  </ul>
+
+  
+</section>
+
+<section id="hppo">
+  <h2>6. H-PPO（IJCAI 2019）<span class="tag hppo">policy-based · on-policy</span></h2>
+  <p class="paper-meta">Fan, Su, Zhang, Yu (SJTU), <em>Hybrid Actor-Critic Reinforcement Learning in Parameterized Action Space</em>, IJCAI 2019 (arXiv:1903.01344)</p>
+
+  <h3>核心想法：一個 critic、兩個平行 actor</h3>
+  <p>既然 stochastic policy 在離散（softmax）和連續（Gaussian）空間都天生可用，那就<strong>各給一個 actor、平行並存</strong>：</p>
+  <div class="flow">
+    <span class="box">state \(s\)</span><span class="arrow">→</span>
+    <span class="box">共享 state encoding 層</span><span class="arrow">→</span>
+    <span class="box">離散 actor \(\pi_{\theta_d}\)：softmax 抽 \(k\)</span>
+    <span class="arrow">+</span>
+    <span class="box">連續 actor \(\pi_{\theta_c}\)：每個參數一組 Gaussian (μ, σ)</span>
+    <span class="arrow">→</span>
+    <span class="box">執行 \((k, x_k)\)</span>
+  </div>
+  <p>連續 actor 每步輸出<strong>所有</strong> \(K\) 個動作的參數分佈，但只執行被抽中的 \(k\) 對應的 \(x_k\)。critic 只估 <strong>V(s) 而非 Q</strong>，理由是 PAMDP 裡 Q 有「過參數化」問題：Q 網路輸入得塞所有動作的參數（維度不一、無法只塞 \(x_k\)），但真正的 Q 根本不依賴未執行動作的參數：</p>
+  $$Q(s, a, x_{a_1}, \dots, x_{a_k}) = Q(s, a, x_a)$$
+  <p>用 \(V(s)\) 完全繞開這件事。</p>
+
+  <div class="fig"><img src="assets/hppo-actor-critic-architecture.png" alt="H-PPO 的 hybrid actor-critic 架構"><div class="figcap">H-PPO 的 hybrid actor-critic 架構：共享 state encoding、平行的離散 / 連續 actor、單一 V(s) critic。圖片來源：H-PPO 論文 Fig. 3。</div></div>
+  <h3>訓練：兩個 PPO clipped objective</h3>
+  <p>兩個 actor 用<strong>同一個 advantage</strong> \(\hat A_t\)（n-step estimator + shared V critic），各自最佳化自己的 clipped surrogate（其 Eq. 9, 10）：</p>
+  $$L_d^{\mathrm{CLIP}}(\theta_d) = \hat{\mathbb{E}}_t\Bigl[\min\bigl(r_t^d \hat A_t,\; \mathrm{clip}(r_t^d, 1\!-\!\epsilon, 1\!+\!\epsilon)\hat A_t\bigr)\Bigr]
+  \qquad
+  r_t^d = \frac{\pi_{\theta_d}(k \mid s_t)}{\pi_{\theta_d^{\mathrm{old}}}(k \mid s_t)}$$
+  $$L_c^{\mathrm{CLIP}}(\theta_c) = \hat{\mathbb{E}}_t\Bigl[\min\bigl(r_t^c \hat A_t,\; \mathrm{clip}(r_t^c, 1\!-\!\epsilon, 1\!+\!\epsilon)\hat A_t\bigr)\Bigr]
+  \qquad
+  r_t^c = \frac{\pi_{\theta_c}(x_k \mid s_t)}{\pi_{\theta_c^{\mathrm{old}}}(x_k \mid s_t)}$$
+  <p>注意：兩個策略被當成<strong>獨立分佈</strong>分開更新，objective 沒有互相 conditioned（不是 joint ratio \(\pi_d \cdot \pi_c\)）。兩者的協調靠：(1) 共享的 encoding 層、(2) 共享的 critic / advantage 訊號（論文引述 Wei et al. 2018 將參數 policy conditioned 於離散 policy 的作法，曾回報 joint learning 不穩定）。</p>
+
+  <h3>實驗</h3>
+  <p>四個自製環境（Catching Point、Moving、Chase and Attack、Half Field Football），對比 P-DQN、離散化 DQN、PA-DDPG（PA-DDPG 因方差過大、學不起來而被排除在圖表外）。</p>
+  <div class="fig"><img src="assets/hppo-experiment-environments.png" alt="H-PPO experiment environments" style="max-width:460px"><div class="figcap">四個實驗環境：(a) Catching Point、(b) Moving、(c) Chase and Attack、(d) Half Field Football。圖片來源：H-PPO 論文 Fig. 5。</div></div>
+  <p>成功率：</p>
+  <div class="scroll">
+  <table>
+    <tr><th>環境</th><th class="center">DQN（離散化）</th><th class="center">P-DQN</th><th class="center">H-PPO</th></tr>
+    <tr><td>Catching Point</td><td class="center">6.1%</td><td class="center">82.5%</td><td class="center"><strong>96.3%</strong></td></tr>
+    <tr><td>Moving</td><td class="center">0%</td><td class="center">1.6%</td><td class="center"><strong>90.5%</strong></td></tr>
+    <tr><td>Chase and Attack</td><td class="center">99.9%</td><td class="center">99.9%</td><td class="center"><strong>100.0%</strong>（方差最小）</td></tr>
+    <tr><td>Half Field Football</td><td class="center">0%</td><td class="center">76.3%</td><td class="center"><strong>95.4%</strong></td></tr>
+  </table>
+  </div>
+  <p>論文結論：H-PPO 在四個任務上皆穩定學習，並在其中三個環境大幅領先（Chase and Attack 三者近乎打平，但 H-PPO 方差最小）。論文也提出往一般階層動作空間的推廣（每個決策節點一個 actor，全部共享 encoder 與 critic），但實驗留作 future work。</p>
+  <div class="fig"><img src="assets/hppo-hierarchical-architecture.png" alt="H-PPO hierarchical architecture" style="max-width:520px"><div class="figcap">推廣到一般階層動作空間的 hybrid actor-critic 架構：多個平行的離散 / 連續 actor（每個動作選擇子問題一個），共享 state encoding 層與單一 V(s) critic。圖片來源：H-PPO 論文 Fig. 4。</div></div>
+</section>
+
+<section id="hyar">
+  <h2>7. HyAR（ICLR 2022）：把混合動作壓進 latent space <span class="tag hyar">representation · off-policy</span></h2>
+  <p class="paper-meta">Li, Tang, Zheng, Hao et al. (Tianjin University), <em>HyAR: Addressing Discrete-Continuous Action RL via Hybrid Action Representation</em>, ICLR 2022</p>
+
+  <div class="callout key">
+    <strong>換一個角度想：</strong>P-DQN 和 H-PPO 都在「為混合結構特製演算法」。HyAR 反過來——<strong>演算法不動（就用標準 TD3），動的是動作空間本身</strong>。它學一個緊緻、可解碼、且帶環境動力學語意的 latent 表徵空間，把離散 + 連續的異質動作統一成一個連續向量；RL 在 latent space 裡跑標準 continuous control，選出的 latent 動作再解碼回真實的 \((k, x_k)\) 去跟環境互動。這是第一篇對 discrete-continuous 混合動作做 representation learning 的工作。
+  </div>
+
+  <h3>三個關鍵性質（HyAR 論文的分類軸）</h3>
+  <p>HyAR 論文用三個性質檢視既有方法（其第 2 頁）。白話來說，就是三個問題：</p>
+  <ul>
+    <li><strong>Scalability（可擴展性）——離散動作變多，方法會不會垮？</strong><br>
+    PA-DDPG / H-PPO / P-DQN 的網路每一步都要輸出「所有離散動作的全部連續參數」。K = 3 時沒感覺，但動作一多（例如組合動作有 \(2^n\) 個），輸出維度跟著爆炸；而每一步真正被執行的只有其中一組參數，其餘都是白算的冗餘，也讓 policy 更難學。論文稱之為 redundancy 與 scalability issue——這三個方法在這條都不及格。</li>
+    <li><strong>Stationarity（平穩性）——replay buffer 裡的舊經驗，現在還算數嗎？</strong><br>
+    這條是針對階層式的 HHQN：高層選離散動作 \(k\)，低層把 \(k\) 當成類似 subgoal 的條件、輸出連續參數。問題是低層 policy 一直在學一直在變——舊經驗裡「當時選了 \(k\)、發生了某個 transition」是<strong>當時的</strong>低層做出來的；低層變了之後，同樣選 \(k\) 不會再引發同樣的 transition，舊經驗對高層而言就失真了，高層等於面對一個非平穩的環境，off-policy 學習會出問題。PA-DDPG / H-PPO / P-DQN 學的是單一整體的 policy / value（相當於直接學 joint policy），沒有上下層互相追逐的問題，這條過關。</li>
+    <li><strong>Dependence（依賴性）——連續參數知道自己在配合哪個離散動作嗎？</strong><br>
+    離散動作 \(k\) 決定了它的參數空間 \(\mathcal{X}_k\)；同一個參數值配上不同的 \(k\)，語意可以完全不同（電池的例子：x = 0.8 配「充電」是充八成功率、配「放電」是反方向的八成功率）。所以原則上，最優 policy 不可能在還沒選定 \(k\) 之前就先決定參數。PA-DDPG / H-PPO 的連續輸出與離散選擇各走各的，忽略了這層依賴；P-DQN（Q 同時看著 \(k\) 和 \(x\) 評分）和 HHQN（低層明確 condition 在 \(k\) 上）有建模到。</li>
+  </ul>
+
+  <p>HyAR 論文用這三個性質給主要方法打分（其 Table 1）：</p>
+  <div class="scroll">
+  <table>
+    <tr><th>方法</th><th class="center">Scalability</th><th class="center">Stationarity</th><th class="center">Dependence</th><th class="center">Latent space</th></tr>
+    <tr><td>PA-DDPG</td><td class="center no">✗</td><td class="center ok">✓</td><td class="center no">✗</td><td class="center no">✗</td></tr>
+    <tr><td>H-PPO</td><td class="center no">✗</td><td class="center ok">✓</td><td class="center no">✗</td><td class="center no">✗</td></tr>
+    <tr><td>P-DQN</td><td class="center no">✗</td><td class="center ok">✓</td><td class="center ok">✓</td><td class="center no">✗</td></tr>
+    <tr><td>HHQN（階層式）</td><td class="center ok">✓</td><td class="center no">✗</td><td class="center ok">✓</td><td class="center no">✗</td></tr>
+    <tr><td><strong>HyAR</strong></td><td class="center ok">✓</td><td class="center ok">✓</td><td class="center ok">✓</td><td class="center ok">✓</td></tr>
+  </table>
+  </div>
+
+  <h3>7.1 為什麼要這樣做？</h3>
+  <ul>
+    <li><strong>Scalability</strong>：PA-DDPG / P-DQN / H-PPO 的 actor 都要一次輸出所有動作的所有參數，網路輸出維度 \(= K + \sum_k |\mathcal{X}_k|\)，離散動作一多（例如組合動作 \(2^n\) 個）就爆掉。HyAR 的 latent 空間固定是 \(d_1 + d_2\) 維（預設 6+6），與 \(K\) 無關。</li>
+    <li><strong>Dependence</strong>：\(k\) 決定了 \(x_k\) 的語意，多數方法直接忽略這層依賴。HyAR 用 conditional 結構顯式建模。</li>
+    <li><strong>Stationarity</strong>：階層式方法（HHQN）雖然可擴展也有依賴結構，但高層策略面對「低層策略一直在變」的非平穩問題，off-policy 舊經驗會失效。HyAR 只有一個 latent policy，沒有這個問題。</li>
+  </ul>
+
+  <h3>7.2 表徵模型：embedding table + conditional VAE</h3>
+  <p>兩個元件，聯合訓練：</p>
+  <div class="fig"><img src="assets/hyar-framework.png" alt="HyAR 整體框架（左）與表徵模型工作流（右）"><div class="figcap">HyAR 整體框架（左）與表徵模型工作流（右）：embedding table + conditional VAE；policy 在 latent space 決策，解碼回原始混合動作後與環境互動。圖片來源：HyAR 論文 Fig. 2。</div></div>
+  <h4>(a) 離散動作 embedding table</h4>
+  <p>一張可學習的表 \(E_\zeta \in \mathbb{R}^{K \times d_1}\)，第 \(k\) 列 \(e_{\zeta,k}\) 是離散動作 \(k\) 的連續 embedding（初始化 \(U(-1,1)\)）。離散動作就此「連續化」，而且是<strong>學出來的</strong>連續化——語意相近的動作會被拉近。</p>
+  <h4>(b) 條件式 VAE：編碼連續參數，並掛上依賴結構</h4>
+  <p>VAE 的 encoder / decoder 都<strong>同時 condition 在 state \(s\) 和離散 embedding \(e_{\zeta,k}\)</strong> 上：</p>
+  $$\text{encoder: } z_x \sim q_\phi(\cdot \mid x_k,\, s,\, e_{\zeta,k}) \in \mathbb{R}^{d_2}
+  \qquad
+  \text{decoder: } \tilde x_k = p_\psi(z_x,\, s,\, e_{\zeta,k})$$
+  <p>VAE loss 是標準的重建 + KL（其 Eq. 2）：</p>
+  $$\mathcal{L}_{VAE}(\phi, \psi, E) = \mathbb{E}_{s,k,x_k}\Bigl[\;\|x_k - \tilde x_k\|_2^2 \;+\; D_{KL}\bigl(q_\phi(\cdot \mid x_k, s, e_{\zeta,k}) \,\|\, \mathcal{N}(0, I)\bigr)\Bigr]$$
+  <p>因為重建梯度也會流回 embedding table，<strong>表和 VAE 是一起學的</strong>。「參數的 latent 以離散 embedding 為條件」這個 conditional 結構，就是把 \(x_k\) 依賴 \(k\) 的關係隱式地織進 latent space——效果上類似 HHQN 的階層條件式結構，但因為 RL 端只有單一 latent policy，避開了非平穩性。實作細節上，條件分支 \((s, e_{\zeta,k})\) 與主分支是用 <strong>element-wise product</strong> 融合（比 concat 好：Goal 上 0.78 vs 0.66）。</p>
+
+  <h4>(c) 編碼 / 解碼</h4>
+  <p>latent 動作是一對向量 \((z_k, z_x) \in \mathbb{R}^{d_1 + d_2}\)。解碼是<strong>級聯</strong>的——先解離散、再以其 embedding 為條件解連續（其 Eq. 3）：</p>
+  $$\hat k = \arg\min_{k \in \mathcal{K}} \|e_{\zeta,k} - \hat z_k\|_2 \quad (\text{embedding table 最近鄰查找})
+  \qquad
+  \hat x_{\hat k} = p_\psi(\hat z_x,\, s,\, e_{\zeta,\hat k}) \quad (\text{VAE decoder})$$
+  <div class="flow">
+    <span class="box alt">latent policy \(\pi_\omega(s) \to (\hat z_k, \hat z_x)\)</span><span class="arrow">→</span>
+    <span class="box alt">最近鄰：\(\hat z_k \to \hat k\)</span><span class="arrow">→</span>
+    <span class="box alt">decoder：\((\hat z_x, s, e_{\zeta,\hat k}) \to \hat x_{\hat k}\)</span><span class="arrow">→</span>
+    <span class="box alt">執行 \((\hat k, \hat x_{\hat k})\)</span>
+  </div>
+
+  <h4>對照：這個想法跟 LDM（Latent Diffusion Model）很像</h4>
+  <p>HyAR 的兩階段結構可以拿 LDM（Stable Diffusion 的基礎）來對照：LDM 的 Stage 1 先訓練 VAE，把高維的像素空間壓進一個緊緻的 latent space；Stage 2 再把 encoder 凍結，讓 diffusion model 在 latent space 裡作業。HyAR 一樣——Stage 1 用 embedding table + conditional VAE 把異質的混合動作壓進 latent space，Stage 2 讓 TD3 在 latent space 裡學 policy、決策後再 decode 回原始動作空間。主要差別在於 HyAR 的表徵模型在 RL 階段<strong>不凍結</strong>、持續微調（因此才需要 RSC relabeling 來修正舊經驗）。</p>
+  <div class="fig"><img src="assets/ldm-two-stage-training.png" alt="LDM two-stage training diagram" style="max-width:560px"><div class="figcap">LDM 的兩階段訓練：Stage 1 訓練 VAE 建立 latent space（🔥 = 可訓練），Stage 2 凍結 encoder（❄️）、在 latent space 訓練 diffusion model——把「diffusion model」換成「TD3 policy」，就是 HyAR 的結構。圖片來源：<a href="https://kdidi.netlify.app/blog/ml/2025-12-31-r4g/" target="_blank" rel="noopener">kdidi.netlify.app</a>。</div></div>
+
+  <h3>7.3 讓 latent 空間「懂環境」：dynamics-predictive loss</h3>
+  <p>只靠 VAE 重建學到的表徵可能是「病態」的：重建得很好，但對「這個動作對環境造成什麼影響」毫無鑑別力——這對 policy / value 學習沒幫助。HyAR 加了一個無監督輔助任務：<strong>從 latent 動作預測狀態殘差</strong> \(\delta_{s,s'} = s' - s\)：</p>
+  $$\mathcal{L}_{Dyn}(\phi, \psi, E) = \mathbb{E}_{s,k,x_k,s'}\Bigl[\|\tilde\delta_{s,s'} - \delta_{s,s'}\|_2^2\Bigr]
+  \qquad
+  \mathcal{L}_{HyAR} = \mathcal{L}_{VAE} + \beta\, \mathcal{L}_{Dyn}, \quad \beta = 10$$
+  
+
+  <div class="fig"><img src="assets/latent-representation-tsne.png" alt="學到的 latent 表徵之 t-SNE 視覺化，顏色代表該動作對環境的影響 \(\delta_{s,s'}\)——影響相近的動作在 latent space 中彼此相鄰，證實 dynamics loss 帶來的語意平滑性。圖片來源"><div class="figcap">學到的 latent 表徵之 t-SNE 視覺化，顏色代表該動作對環境的影響 \(\delta_{s,s'}\)——影響相近的動作在 latent space 中彼此相鄰，證實 dynamics loss 帶來的語意平滑性。圖片來源：HyAR 論文 Fig. 6。</div></div>
+  <div class="callout key">
+    <strong>Dynamics loss 帶來的性質（論文 Fig. 6 與 ablation）：</strong>加了 dynamics loss 之後，latent 空間變得「語意平滑」——latent 上相近的兩個點，對環境造成的影響也相近。論文的 t-SNE 視覺化（以 \(\delta_{s,s'}\) 上色）清楚顯示 latent 動作按環境影響聚類。對在這個空間上做函數逼近的 Q 網路和 policy 來說，這種平滑性直接轉化為更好的泛化與更快的學習。而且這個訊號是 reward-agnostic 的 dynamics 資料——便宜、密集、隨處可得。移除它，Goal 成功率從 0.78 掉到 0.66，且更慢、方差更大。
+  </div>
+  <h3>7.4 訓練流程：HyAR-TD3</h3>
+  <p>latent policy \(\pi_\omega(s) \in [-1,1]^{d_1+d_2}\)（tanh 輸出），double critics 直接吃 latent 動作 \(Q_{\theta_i}(s, \hat z_k, \hat z_x)\)，標準 TD3（clipped double-Q + delayed deterministic policy gradient + Gaussian 探索雜訊 \(\mathcal{N}(0, 0.1)\)）。兩階段：</p>
+  <ol>
+    <li><strong>Warm-up 預訓練</strong>：先用隨機策略收一批資料（約佔總步數 5–10%，附錄顯示砍 80% 也幾乎不影響結果），預訓練 embedding table + VAE（5000 個 batch）。</li>
+    <li><strong>RL 階段</strong>：TD3 在 latent space 學習；同時表徵模型<strong>持續微調</strong>（每 10 個 episode 更新一次）以跟上資料分佈的變化。凍結表徵的 ablation（Fixed HyAR）全面變差，在 Goal / Hard Goal 上甚至災難性失敗——表徵必須跟著 RL 一起演化。</li>
+  </ol>
+  <div class="fig"><img src="assets/hyar-td3-algorithm.png" alt="HyAR-TD3 Algorithm 1" style="max-width:760px"><div class="figcap">HyAR-TD3 完整 pseudo-code：Stage ❶ warm-up（第 4–6 行，預訓練表徵）；Stage ❷ 訓練（第 7–21 行：latent 動作選擇與解碼（第 9–12 行）、TD3 更新（第 16–17 行）、表徵持續微調（第 18–20 行））。圖片來源：HyAR 論文 Algorithm 1。</div></div>
+
+  <h3>7.5 兩個關鍵的穩定機制</h3>
+  <h4>(a) Latent Space Constraint（LSC）</h4>
+  <p>latent 空間是從有限樣本學出來的，資料支撐之外的區域解碼不可靠、Q 值也估不準。若 latent policy 輸出這種 out-of-distribution 的點（訓練初期很常見），表現會崩潰。解法：定期從 buffer 抽 \(M\) 筆資料算出每個 latent 維度的 <strong>c% 中央分位數區間</strong>，把 policy 的 tanh 輸出自適應地縮放到這個區間內。\(c = 96\) 最好；\(c=100\)（太鬆，包含離群點）與 \(c=80\)（太保守）都明顯變差（Goal：0.78 vs 0.62 vs 0.08）。</p>
+  <h4>(b) Representation Shift Correction（RSC / relabeling）</h4>
+  <p>表徵持續在變，replay buffer 裡存的舊 latent 動作會「過期」——同一個 latent 向量在新表徵下已不代表當初那筆 transition。解法：buffer 同時存原始動作與 latent 動作，每個 mini-batch 更新前檢查語意一致性並<strong>重新標記</strong>：</p>
+  <ul>
+    <li><strong>離散 latent</strong>：若用最新的 table 做最近鄰查找已對不回原本的 \(\hat k\)，就 relabel 為 \(e_{\zeta,\hat k} + \mathcal{N}(0, 0.1)\)。</li>
+    <li><strong>連續 latent</strong>：用最新 decoder 預測 \(\tilde\delta_{s,s'}\)，若誤差超過門檻 \(\delta_0 = 4\hat{\mathcal{L}}_{Dyn}\)（動態的移動平均），就用最新 encoder 重新編碼 \(x_k\)。</li>
+  </ul>
+  <p>這保證 value learning 永遠使用最新的表徵語意。移除 relabeling，Goal 從 0.78 掉到 0.55 且方差變大。</p>
+
+  <h3>7.6 實驗</h3>
+  <p>Benchmark：Platform、Goal、Catch Point，加上兩個作者自製的困難版——<strong>Hard Goal</strong>（射門切成 10 個 parameterized 動作）和 <strong>Hard Move</strong>（\(n\) 個致動器各自開/關 → 離散動作數 \(2^n\)，每個致動器帶一個連續距離參數；\(n \in \{4,6,8,10\}\) 對應 16 ~ 1024 個離散動作，專門考驗擴展性）。Baseline 全面 TD3 化以求公平（PATD3、PDQN-TD3、HHQN-TD3）。成功率摘要：</p>
+  <div class="scroll">
+  <table>
+    <tr><th>環境</th><th class="center">HyAR-TD3</th><th class="center">最強 baseline</th></tr>
+    <tr><td>Platform</td><td class="center"><strong>0.98</strong></td><td class="center">≈0.9x（PDQN 系）</td></tr>
+    <tr><td>Goal</td><td class="center"><strong>0.78</strong></td><td class="center">0.71（PDQN-TD3）</td></tr>
+    <tr><td>Hard Goal</td><td class="center"><strong>0.60</strong></td><td class="center">0.44（PATD3）；PDQN-TD3 僅 0.06</td></tr>
+    <tr><td>Catch Point</td><td class="center"><strong>0.90</strong></td><td class="center">—</td></tr>
+    <tr><td>Hard Move (n=4，16 個離散動作)</td><td class="center"><strong>0.93</strong></td><td class="center">0.85（PDQN-TD3）</td></tr>
+    <tr><td>Hard Move (n=6，64 個)</td><td class="center"><strong>0.92</strong></td><td class="center">0.74</td></tr>
+    <tr><td>Hard Move (n=8，256 個)</td><td class="center"><strong>0.89</strong></td><td class="center">0.05 —— 所有非 HyAR 方法全數崩潰（0.04–0.06）</td></tr>
+    <tr><td>Hard Move (n=10，1024 個)</td><td class="center"><strong>0.75</strong></td><td class="center">≈0.05</td></tr>
+  </table>
+  </div>
+  <div class="fig"><img src="assets/algorithm-learning-curves.png" alt="各演算法學習曲線（實線 = 5 seeds 平均）"><div class="figcap">各演算法學習曲線（實線 = 5 seeds 平均）：下排 (e)–(h) 為 Hard Move，離散動作數從 2⁴ 增至 2¹⁰，只有 HyAR-TD3（紅）維持性能。圖片來源：HyAR 論文 Fig. 5。</div></div>
+  <p><strong>離散動作數指數成長時，HyAR 幾乎不退化，其他所有方法在 \(n \ge 8\) 全滅</strong>——因為別人的網路輸出維度跟著 \(K\) 線性爆炸，HyAR 的 latent 維度固定不變。唯一的例外情況：在小動作空間（Goal / Platform）上 PDQN 略勝 HyAR-<em>DDPG</em>（小空間中學出的 latent 可能稀疏帶噪；TD3 的低估偏差恰好補償，所以 HyAR-TD3 仍領先）。</p>
+
+  
+</section>
+
+<section id="compare">
+  <h2>8. 三方法總比較</h2>
+  <div class="scroll">
+  <table>
+    <tr>
+      <th style="width:16%"></th>
+      <th>P-DQN (2018)</th>
+      <th>H-PPO (2019)</th>
+      <th>HyAR (2022)</th>
+    </tr>
+    <tr><td><strong>哲學</strong></td>
+      <td>為混合結構特製 value-based 演算法（DQN × DDPG）</td>
+      <td>為混合結構特製 policy-based 演算法（PPO × 雙 actor）</td>
+      <td>不改演算法，改動作空間（學 latent 表徵 + 標準 TD3）</td></tr>
+    <tr><td><strong>On/Off-policy</strong></td><td>Off-policy</td><td>On-policy</td><td>Off-policy</td></tr>
+    <tr><td><strong>離散選擇</strong></td><td>\(\arg\max_k Q(s,k,x_k)\)</td><td>softmax 抽樣</td><td>latent 向量 → embedding 最近鄰</td></tr>
+    <tr><td><strong>連續參數</strong></td><td>deterministic actor（全部輸出）</td><td>Gaussian actor（全部輸出）</td><td>latent 向量 → conditional VAE decoder（只解需要的）</td></tr>
+    <tr><td><strong>依賴結構 \(k \to x_k\)</strong></td><td>部分（Q 有 joint 輸入，但有 false-gradient 問題）</td><td>無（兩 actor 獨立，靠共享 encoder/critic 間接協調）</td><td>有（conditional VAE 級聯解碼）</td></tr>
+    <tr><td><strong>大 K 擴展性</strong></td><td class="no">差（輸出隨 K 爆炸；Hard Move n≥8 崩潰）</td><td class="no">差（同左）</td><td class="ok">好（latent 維度與 K 無關）</td></tr>
+    <tr><td><strong>樣本效率</strong></td><td class="ok">高（replay）</td><td class="no">低（on-policy）</td><td class="ok">高（replay + TD3）</td></tr>
+    <tr><td><strong>穩定性</strong></td><td>中（HFO 上有 16.8% 成功率標準差的紀錄）</td><td class="ok">高（賣點就是低方差）</td><td>依賴 LSC / RSC 機制，調好後穩定</td></tr>
+    <tr><td><strong>實作複雜度</strong></td><td>低-中（兩個網路）</td><td>低（就是 PPO 加一個頭）</td><td>高（VAE + table + 預訓練 + relabeling + LSC）</td></tr>
+    <tr><td><strong>已知弱點</strong></td><td>joint 參數輸入的 false gradients（→ 用 MP-DQN 修正）；sum-of-Q 更新錯位</td><td>忽略依賴結構；樣本效率；未用 joint ratio 無理論保證</td><td>工程複雜；小動作空間無優勢；表徵品質依賴 warm-up 資料覆蓋度</td></tr>
+  </table>
+  </div>
+</section>
+
+
+
+<section id="refs">
+  <h2>9. 參考文獻</h2>
+  <ol class="refs">
+    <li>Xiong, J., Wang, Q., Yang, Z., Sun, P., Han, L., Zheng, Y., Fu, H., Zhang, T., Liu, J., Liu, H. <em>Parametrized Deep Q-Networks Learning: Reinforcement Learning with Discrete-Continuous Hybrid Action Space.</em> arXiv:1810.06394, 2018.</li>
+    <li>Fan, Z., Su, R., Zhang, W., Yu, Y. <em>Hybrid Actor-Critic Reinforcement Learning in Parameterized Action Space.</em> IJCAI 2019 (arXiv:1903.01344).</li>
+    <li>Li, B., Tang, H., Zheng, Y., Hao, J., Li, P., Wang, Z., Meng, Z., Wang, L. <em>HyAR: Addressing Discrete-Continuous Action Reinforcement Learning via Hybrid Action Representation.</em> ICLR 2022.</li>
+    <li>Hausknecht, M., Stone, P. <em>Deep Reinforcement Learning in Parameterized Action Space.</em> ICLR 2016.（PA-DDPG）</li>
+    <li>Masson, W., Ranchod, P., Konidaris, G. <em>Reinforcement Learning with Parameterized Actions.</em> AAAI 2016.（PAMDP / Q-PAMDP）</li>
+    <li>Bester, C. J., James, S. D., Konidaris, G. <em>Multi-Pass Q-Networks for Deep Reinforcement Learning with Parameterised Action Spaces.</em> arXiv:1905.04388, 2019.（MP-DQN）</li>
+    <li>Fu, H. et al. <em>Deep Multi-Agent Reinforcement Learning with Discrete-Continuous Hybrid Action Spaces.</em> IJCAI 2019.（HHQN）</li>
+  </ol>
+</section>
+
+</main>
+
+<nav class="pager">
+  <a id="pgPrev" href="#toc"></a>
+  <span class="pos" id="pgPos"></span>
+  <a id="pgNext" href="#motivation"></a>
+</nav>
+
+<footer>
+  數學式由 MathJax（CDN）渲染，離線開啟時公式將以原始 LaTeX 顯示。本報告內容整理自上列論文原文。
+</footer>
+
+
+<script>
+(function(){
+  var PAGES=[['toc','目錄'],['motivation','1. 緣起'],['modeling','2. 建模基礎'],['problem','3. PAMDP'],
+             ['landscape','4. 方法版圖'],['pdqn','5. P-DQN'],['hppo','6. H-PPO'],['hyar','7. HyAR'],
+             ['compare','8. 總比較'],['refs','9. 參考文獻']];
+  var ids=PAGES.map(function(p){return p[0];});
+  document.body.classList.add('paged');
+  var nav=document.getElementById('topnav');
+  PAGES.forEach(function(p){
+    var a=document.createElement('a');
+    a.href='#'+p[0]; a.textContent=p[1]; a.setAttribute('data-pg',p[0]);
+    nav.appendChild(a);
+  });
+  var prev=document.getElementById('pgPrev'), next=document.getElementById('pgNext'), pos=document.getElementById('pgPos');
+  function cur(){ var h=location.hash.replace('#',''); return ids.indexOf(h)>=0?h:'toc'; }
+  function activate(){
+    var id=cur(), i=ids.indexOf(id);
+    document.querySelectorAll('main > section').forEach(function(s){ s.classList.toggle('active', s.id===id); });
+    var hero=document.querySelector('header.hero'); if(hero) hero.style.display=(id==='toc')?'':'none';
+    nav.querySelectorAll('a').forEach(function(a){ a.classList.toggle('active', a.getAttribute('data-pg')===id); });
+    var an=nav.querySelector('a.active'); if(an&&an.scrollIntoView) an.scrollIntoView({block:'nearest',inline:'center'});
+    prev.classList.toggle('hidden', i===0);
+    next.classList.toggle('hidden', i===ids.length-1);
+    if(i>0){ prev.textContent='← '+PAGES[i-1][1]; prev.href='#'+ids[i-1]; }
+    if(i<ids.length-1){ next.textContent=PAGES[i+1][1]+' →'; next.href='#'+ids[i+1]; }
+    pos.textContent=(i+1)+' / '+ids.length;
+    window.scrollTo(0,0);
+  }
+  window.addEventListener('hashchange', activate);
+  document.addEventListener('keydown', function(e){
+    var i=ids.indexOf(cur());
+    if(e.key==='ArrowLeft'&&i>0) location.hash=ids[i-1];
+    if(e.key==='ArrowRight'&&i<ids.length-1) location.hash=ids[i+1];
+  });
+  activate();
+})();
+</script>
+</body>
+</html>
