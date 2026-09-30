@@ -15,7 +15,8 @@ two mental models throughout: the **roofline** (arithmetic intensity vs. ridge
 point) and the **memory hierarchy**. The storyline: decode is memory-bound, because
 every generated token moves the full weights and KV cache through memory.
 
-All materials are static web pages. Open [`index.html`](./index.html) to start.
+All materials are static web pages. **[Open the published site](https://chesterhsieh.github.io/Always_try_to_learn/gpu-memory-reading-club/)** to read
+them in the browser, or open [`index.html`](./index.html) from this folder.
 
 | Part | Topic | Slides | Speaker notes |
 |---|---|---|---|
