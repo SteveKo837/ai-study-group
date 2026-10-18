@@ -7,6 +7,7 @@ notes, diagrams, papers, references, and examples.
 
 - [AI Infrastructure](./ai-infrastructure/)
 - [Computer Vision](./computer-vision/)
+- [Decision Models](./decision-models/)
 - [Reinforcement Learning](./reinforcement-learning/)
 
 ## Contributing

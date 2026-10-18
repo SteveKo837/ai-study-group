@@ -1,0 +1,1153 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#070817">
+  <meta name="description" content="A technically rigorous study-group deck on JEV, including a source-grounded Laya inference walkthrough, data provenance, RLCD training, calibration, and decision risk.">
+  <title>JEV Explained: Speed, Laya, Calibration, and Risk</title>
+  <script>if ("scrollRestoration" in history) history.scrollRestoration = "manual";</script>
+  <link rel="stylesheet" href="./styles.css?v=20261013-laya-forward-pass">
+</head>
+<body>
+  <div class="deck-shell">
+    <main class="stage" aria-live="polite">
+
+      <section class="slide title-slide active" data-short="What is JEV?" aria-label="Slide 1">
+        <div class="title-accent" aria-hidden="true"></div>
+        <div class="title-main">
+          <div class="slide-kicker">AI / ML Study Group · source-checked 2026-10-13</div>
+          <h1>What is JEV?<br>Why is it so fast—and why did<br>compatible alternatives appear?</h1>
+          <p class="subtitle">System One Models, typed decisions, open implementations, calibration, and automated-trading failures</p>
+          <div class="statement warning" style="max-width: 1080px; margin-top: 36px;">
+            It can guarantee the shape of an answer—not that the bet is right.<br>
+            <span class="muted small">Speed, replicability, and trustworthiness are three different questions.</span>
+          </div>
+        </div>
+        <div class="title-meta">
+          <span>Technical skepticism without cynicism</span>
+          <span>35–40 minutes + discussion</span>
+        </div>
+        <aside class="presenter-notes" lang="zh-Hant">
+          <p><strong>時間：</strong> 0:45</p>
+          <p><strong>開場：</strong> 不要先介紹公司，也不要先解釋名詞。直接丟出矛盾：一個不寫句子、只負責選答案的模型，為什麼會迅速帶出各種示範、相容替代方案，還有「害我賠了 31,680 美元」的病毒式故事？[停頓]</p>
+          <p><strong>界線：</strong> 這場分享不會照單全收廠商說法。每一個架構主張都會清楚標成官方確認、合理推論、開源實作細節，或尚未驗證的說法。</p>
+          <p><strong>轉場：</strong> 先定義聽完之後，我們應該能做出哪些工程判斷。</p>
+        </aside>
+        <footer class="source-footer">
+          <details><summary>Sources: TypeSafe announcement and documentation</summary><div class="source-pop">
+            <a href="https://typesafe.ai/blog/introducing-system-one-models-and-jev" target="_blank" rel="noreferrer">TypeSafe: Introducing System One Models &amp; Jev</a>
+            <a href="https://docs.typesafe.ai/introduction" target="_blank" rel="noreferrer">TypeSafe Docs: Introduction</a>
+          </div></details><span class="slide-id">01</span>
+        </footer>
+      </section>
+
+      <section class="slide" data-short="Separate speed, replication, and trust" aria-label="Slide 2">
+        <div class="eyebrow">Learning objectives</div>
+        <h2>Speed, replication, and trust are three separate questions</h2>
+        <div class="grid three" style="margin-top: 42px;">
+          <article class="panel cyan-line">
+            <div class="big-number cyan">01</div>
+            <h3>Mechanism</h3>
+            <p>What does JEV actually compute, and how does that path differ from a generative LLM with constrained decoding?</p>
+          </article>
+          <article class="panel purple-line">
+            <div class="big-number purple">02</div>
+            <h3>Evidence</h3>
+            <p>What has TypeSafe confirmed? What is inferred from the API? What belongs only to Laya, Jeff, CLM, or Clef?</p>
+          </article>
+          <article class="panel orange-line">
+            <div class="big-number orange">03</div>
+            <h3>Decision quality</h3>
+            <p>What do typed output, confidence, and calibration actually guarantee—and how should a production workload be benchmarked?</p>
+          </article>
+        </div>
+        <div class="statement" style="margin-top: 30px;">
+          The practical question: which expensive LLM calls should be reframed as bounded-set decisions?
+        </div>
+        <aside class="presenter-notes" lang="zh-Hant">
+          <p><strong>時間：</strong> 0:50</p>
+          <p><strong>重點：</strong> 這三個層次很容易被混在一起。速度是系統問題；複製是介面與資料問題；信任則是統計與產品安全問題。</p>
+          <p><strong>轉場：</strong> 先把結論講在前面。後面的張力，來自我們要證明這個結論為什麼成立。</p>
+        </aside>
+        <footer class="source-footer">
+          <details><summary>Sources: TypeSafe introduction and build guide</summary><div class="source-pop">
+            <a href="https://docs.typesafe.ai/introduction" target="_blank" rel="noreferrer">TypeSafe Docs: Introduction</a>
+            <a href="https://docs.typesafe.ai/concepts/how-to-build-with-system-one" target="_blank" rel="noreferrer">TypeSafe Docs: How to build</a>
+          </div></details><span class="slide-id">02</span>
+        </footer>
+      </section>
+
+      <section class="slide" data-short="Four answers up front" aria-label="Slide 3">
+        <div class="eyebrow">Executive summary</div>
+        <h2>The short answer: skipping decode does not remove decision risk</h2>
+        <div class="grid two">
+          <article class="panel"><span class="badge official">Official claim</span><h3 style="margin-top:14px;">JEV is not a chatbot</h3><p>It maps context plus predefined questions or candidates to typed decisions, scores, and probabilities.</p></article>
+          <article class="panel"><span class="badge inference">Reasonable inference</span><h3 style="margin-top:14px;">The workload changed</h3><p>There is no long autoregressive decode; the answer space is fixed, output is tiny, and multiple judgments can be scored in parallel.</p></article>
+          <article class="panel"><span class="badge open">Verified boundary</span><h3 style="margin-top:14px;">Only the contract has been copied</h3><p>Open projects reproduce the request/response behavior with their own disclosed models. They do not reveal or reproduce JEV’s undisclosed head, training recipe, or architecture.</p></article>
+          <article class="panel"><span class="badge inference">Technical distinction</span><h3 style="margin-top:14px;">Valid output ≠ correct decision</h3><p>A typed response constrains outputs to declared values—not option-order bias, OOD failure, semantic mistakes, or bad strategy.</p></article>
+        </div>
+        <aside class="presenter-notes" lang="zh-Hant">
+          <p><strong>時間：</strong> 1:10</p>
+          <p><strong>強調：</strong> 這一頁就是結論。後面的投影片會逐一建立這四個主張。</p>
+          <p><strong>措辭：</strong> TypeSafe 保證的是輸出符合 schema，不是事實正確，也不是決策正確。官方文件自己就記錄了高信心答錯，以及選項順序敏感等行為。</p>
+          <p><strong>轉場：</strong> 要理解速度，先看它把工作負載改成了什麼。</p>
+        </aside>
+        <footer class="source-footer">
+          <details><summary>Sources: TypeSafe announcement, Jev 1.13 limitations, CEO comment</summary><div class="source-pop">
+            <a href="https://typesafe.ai/blog/introducing-system-one-models-and-jev" target="_blank" rel="noreferrer">TypeSafe announcement</a>
+            <a href="https://docs.typesafe.ai/model-jaggedness/jev-1.13" target="_blank" rel="noreferrer">Jev 1.13 jaggedness</a>
+            <a href="https://news.ycombinator.com/item?id=49717558" target="_blank" rel="noreferrer">Hacker News: TypeSafe CEO discussion</a>
+          </div></details><span class="slide-id">03</span>
+        </footer>
+      </section>
+
+      <section class="slide" data-short="Generation becomes a bounded bet" aria-label="Slide 4">
+        <div class="eyebrow">Workload shift</div>
+        <h2>JEV turns “generate an answer” into “bet on a bounded set”</h2>
+        <div class="grid two" style="margin-top: 8px;">
+          <article class="panel compare-card purple-line">
+            <div><span class="badge independent">Generative LLM</span><h3 style="margin-top:14px;">Generates a parseable string token by token</h3></div>
+            <div>
+              <p class="muted small">Prompt: Choose a tool and return JSON.</p>
+              <div class="token-chain" aria-label="Token-by-token generation diagram">
+                <span class="token">{</span><span class="token-arrow">→</span><span class="token">"tool"</span><span class="token-arrow">→</span><span class="token">:</span><span class="token-arrow">→</span><span class="token">"search"</span><span class="token-arrow">→ …</span>
+              </div>
+            </div>
+            <p class="small muted">Can emit arbitrary content; requires decode, parse, and validation, often with constrained decoding.</p>
+          </article>
+          <article class="panel compare-card cyan-line">
+            <div><span class="badge official">Vendor-documented API</span><h3 style="margin-top:14px;">Returns probabilities over declared answers</h3></div>
+            <div class="prob-bars" aria-label="Illustrative candidate probabilities">
+              <div class="prob-row"><span class="prob-label">search</span><span class="bar-track"><span class="bar-fill" style="display:block;width:82%"></span></span><span class="prob-value">0.82</span></div>
+              <div class="prob-row"><span class="prob-label">database</span><span class="bar-track"><span class="bar-fill" style="display:block;width:12%"></span></span><span class="prob-value">0.12</span></div>
+              <div class="prob-row"><span class="prob-label">human</span><span class="bar-track"><span class="bar-fill" style="display:block;width:6%"></span></span><span class="prob-value">0.06</span></div>
+            </div>
+            <p class="small muted"><code>Choice</code> selects one item; <code>Score</code> rates an ordinal scale; <code>Noul</code> returns P(true). None produces free-form text.</p>
+          </article>
+        </div>
+        <div class="statement" style="margin-top: 24px;">The public contract returns typed distributions rather than generated answer text; the internal computation remains undisclosed.</div>
+        <aside class="presenter-notes" lang="zh-Hant">
+          <p><strong>時間：</strong> 1:20</p>
+          <p><strong>類比：</strong> LLM 像是逐字把表單打出來；決策模型則是直接替已經存在的欄位打分數。</p>
+          <p><strong>技術細節：</strong> constrained decoding 仍然會產生 token，只是限制哪些 token 合法。TypeSafe 表示 Jev 不生成答案文字，而是直接回傳有型別的分布；但它沒有公開產生這些分布的網路。</p>
+          <p><strong>注意：</strong> 這裡的機率只用來說明介面，不是實測數字。</p>
+          <p><strong>轉場：</strong> 介面再清楚，也不能反推出裡面的網路。</p>
+        </aside>
+        <footer class="source-footer">
+          <details><summary>Sources: TypeSafe primitives and API documentation</summary><div class="source-pop">
+            <a href="https://docs.typesafe.ai/primitives" target="_blank" rel="noreferrer">TypeSafe Docs: Primitives</a>
+            <a href="https://docs.typesafe.ai/api" target="_blank" rel="noreferrer">TypeSafe API reference</a>
+          </div></details><span class="slide-id">04</span>
+        </footer>
+      </section>
+
+      <section class="slide" data-short="The contract is public; the architecture is not" aria-label="Slide 5">
+        <div class="eyebrow">Architecture boundary</div>
+        <h2>The contract is public; the internal architecture is not</h2>
+        <div class="flow" style="margin-top: 44px;">
+          <div class="flow-node">Text / structured-text state<br>+ typed questions</div><div class="flow-arrow">→</div>
+          <div class="flow-node highlight">Undisclosed Jev computation<br><span class="small muted">backbone · head · loss · serving</span></div><div class="flow-arrow">→</div>
+          <div class="flow-node">Typed choice, score,<br>probability distribution</div>
+        </div>
+        <div class="grid asym" style="margin-top: 32px;">
+          <div class="panel">
+            <span class="badge official">Officially confirmed</span>
+            <ul style="margin-top:16px;">
+              <li>Input is text; state may be a string or JSON object/array of text values</li>
+              <li>TypeSafe says questions are evaluated independently and in parallel</li>
+              <li>The API returns bounded typed values plus probabilities</li>
+            </ul>
+          </div>
+          <div class="unknown-box">
+            <span class="badge inference">Conceptual diagram</span>
+            <p style="margin:14px 0 8px;"><strong>Unknown:</strong> exact backbone, parameter count, candidate interaction, decision head, loss, calibration, and serving topology.</p>
+            <p class="small muted" style="margin:0;">TypeSafe’s CEO says the architecture remains “close to the chest.” Laya uses ModernBERT; that does not mean JEV does.</p>
+          </div>
+        </div>
+        <aside class="presenter-notes" lang="zh-Hant">
+          <p><strong>時間：</strong> 1:20</p>
+          <p><strong>框架：</strong> 中間這個方塊刻意保持不透明。公開介面只能確認輸入和輸出，不能證明裡面有語意編碼器、候選互動模組，或某一種特定的決策 head。</p>
+          <p><strong>避免過度推論：</strong> 不要把 JEV 稱為 encoder-only，也不要把 Laya 的 <code>[MASK]</code> 選項標記套到 JEV 身上。</p>
+          <p><strong>轉場：</strong> 即使不知道精確架構，我們仍能從計算形態解釋它為什麼可能更快。</p>
+        </aside>
+        <footer class="source-footer">
+          <details><summary>Sources: TypeSafe Docs and the CEO’s Hacker News comments</summary><div class="source-pop">
+            <a href="https://docs.typesafe.ai/introduction" target="_blank" rel="noreferrer">TypeSafe Docs: Introduction</a>
+            <a href="https://news.ycombinator.com/item?id=49717558" target="_blank" rel="noreferrer">Hacker News: “architecture is close to the chest”</a>
+          </div></details><span class="slide-id">05</span>
+        </footer>
+      </section>
+
+      <section class="slide compact dense" data-short="Direct answer: why is JEV fast?" aria-label="Slide 6">
+        <div class="eyebrow">Direct answer #1</div>
+        <h2>JEV avoids autoregressive output; the rest of its speed path is undisclosed</h2>
+        <div class="grid two">
+          <div>
+            <div class="formula">T<sub>LLM</sub> ≈ T<sub>prefill</sub> + N<sub>output</sub> × T<sub>decode step</sub></div>
+            <div class="center cyan" style="font-size:34px; margin:12px 0;">↓</div>
+            <div class="formula">T<sub>Jev API</sub> = T<sub>undisclosed model + serving</sub> + tiny typed response</div>
+          </div>
+          <div class="grid two" style="gap:12px;">
+            <div class="panel"><span class="badge official">Reported</span><h3 style="margin-top:10px;">No answer-text decode</h3><p class="small">TypeSafe says Jev returns decisions rather than generated text.</p></div>
+            <div class="panel"><span class="badge official">Reported</span><h3 style="margin-top:10px;">Declared answer space</h3><p class="small">Choice and Score operate over options or levels supplied in the request.</p></div>
+            <div class="panel"><span class="badge official">Reported</span><h3 style="margin-top:10px;">Parallel questions</h3><p class="small">TypeSafe says multiple questions are evaluated independently in one request.</p></div>
+            <div class="panel"><span class="badge inference">Inference</span><h3 style="margin-top:10px;">Less serial output work</h3><p class="small">Avoiding token-by-token answer emission removes output-length-dependent decoding.</p></div>
+            <div class="panel"><span class="badge unverified">Unknown</span><h3 style="margin-top:10px;">Model size and head</h3><p class="small">No parameter count, backbone, or output-head design is public.</p></div>
+            <div class="panel"><span class="badge unverified">Unknown</span><h3 style="margin-top:10px;">Serving contribution</h3><p class="small">Batching, scheduler, hardware, and topology are undisclosed.</p></div>
+          </div>
+        </div>
+        <div class="statement warning" style="margin-top:20px; font-size:24px;">
+          The mechanism supports a latency hypothesis, not a universal speed ranking. Compare end-to-end latency on identical inputs, hardware class, batching, region, and success criteria.
+        </div>
+        <aside class="presenter-notes" lang="zh-Hant">
+          <p><strong>時間：</strong> 1:40</p>
+          <p><strong>直接回答：</strong> 公開文件顯示，這個介面不需要解碼答案文字，而且一次請求能回傳多個問題的結果。這合理地減少了序列式輸出工作。</p>
+          <p><strong>精確說法：</strong> 不要把 Jev 的速度歸因於 encoder、取消 KV cache、小模型，或某種特定 scoring head。這些細節都沒有公開。</p>
+          <p><strong>基準：</strong> 如果任務只有八個固定 intent，本地分類器可能更快。TypeSafe 把 Jev 定位成通用的 zero-shot 決策模型，但要主張全面勝出，仍需要條件一致的獨立評估。</p>
+          <p><strong>轉場：</strong> 大多數元件都不新。那真正的創新可能在哪裡？</p>
+        </aside>
+        <footer class="source-footer">
+          <details><summary>Sources: TypeSafe announcement, parallel questions, and model specs</summary><div class="source-pop">
+            <a href="https://typesafe.ai/blog/introducing-system-one-models-and-jev" target="_blank" rel="noreferrer">TypeSafe announcement</a>
+            <a href="https://docs.typesafe.ai/cookbooks/parallel_questions" target="_blank" rel="noreferrer">Parallel questions cookbook</a>
+            <a href="https://docs.typesafe.ai/models" target="_blank" rel="noreferrer">Jev model specs</a>
+            <a href="https://news.ycombinator.com/item?id=49717558" target="_blank" rel="noreferrer">CEO: architecture is undisclosed</a>
+          </div></details><span class="slide-id">06</span>
+        </footer>
+      </section>
+
+      <section class="slide" data-short="Old components can still make a useful product" aria-label="Slide 7">
+        <div class="eyebrow">Novelty vs usefulness</div>
+        <h2>The product contract is clear; architecture-level novelty has not been disclosed</h2>
+        <div class="grid asym">
+          <div class="axis-chart" role="img" aria-label="Conceptual chart of technical novelty versus product and engineering utility">
+            <span class="axis-label-x">Technical novelty →</span><span class="axis-label-y">Product / engineering utility →</span>
+            <span class="dot" style="left:22%;bottom:63%">Transformer encoder</span>
+            <span class="dot p" style="left:30%;bottom:48%">classification head</span>
+            <span class="dot" style="left:36%;bottom:68%">candidate ranking</span>
+            <span class="dot p" style="left:43%;bottom:43%">contrastive / preference</span>
+            <span class="dot g" style="left:48%;bottom:78%">typed schema + API</span>
+            <span class="dot g" style="left:58%;bottom:87%">reported zero-shot API</span>
+            <span class="dot o" style="left:77%;bottom:66%">undisclosed RLCD / architecture</span>
+          </div>
+          <div>
+            <div class="panel cyan-line">
+              <span class="badge inference">Balanced conclusion</span>
+              <h3 style="margin-top:14px;">Established methods can implement the same task contract</h3>
+              <p>Open projects use encoders, decoder backbones, ranking, supervised fine-tuning, contrastive learning, and post-hoc calibration.</p>
+              <p>That shows multiple ways to build typed decisions; it does not identify which components Jev uses.</p>
+            </div>
+            <div class="unknown-box" style="margin-top:18px;">
+              <strong>TypeSafe reports a new architecture and RLCD method, but neither can yet be assessed independently.</strong>
+              <div class="small muted" style="margin-top:8px;">No complete paper, ablation, or training recipe has been published.</div>
+            </div>
+          </div>
+        </div>
+        <aside class="presenter-notes" lang="zh-Hant">
+          <p><strong>時間：</strong> 1:20</p>
+          <p><strong>讀圖方式：</strong> 圖上的座標是概念位置，不是量測分數。成熟技術仍可能透過整合、合約設計，以及不同的成本曲線創造很大價值。</p>
+          <p><strong>避免走極端：</strong> 開源實作證明，熟悉的方法可以近似這個產品合約。它們不能證明 Jev 使用相同方法，也不能證明 TypeSafe 宣稱的通用性已被複製。</p>
+          <p><strong>轉場：</strong> RLCD 被描述成專有訓練方法。問題是，公開資訊到底有多少？</p>
+        </aside>
+        <footer class="source-footer">
+          <details><summary>Sources: TypeSafe AI primer, official announcement, and Hacker News discussion</summary><div class="source-pop">
+            <a href="https://docs.typesafe.ai/introduction/machine-learning-primer" target="_blank" rel="noreferrer">TypeSafe AI primer</a>
+            <a href="https://typesafe.ai/blog/introducing-system-one-models-and-jev" target="_blank" rel="noreferrer">TypeSafe announcement</a>
+            <a href="https://news.ycombinator.com/item?id=49717558" target="_blank" rel="noreferrer">HN discussion</a>
+          </div></details><span class="slide-id">07</span>
+        </footer>
+      </section>
+
+      <section class="slide" data-short="RLCD’s goal is public; its recipe is not" aria-label="Slide 8">
+        <div class="eyebrow">RLCD</div>
+        <h2>RLCD’s goal is public; TypeSafe’s full recipe is not</h2>
+        <div class="grid asym">
+          <div>
+            <div class="panel cyan-line">
+              <span class="badge official">Official claim</span>
+              <h3 style="margin-top:14px;">Reinforcement Learning for Calibrated Decisions</h3>
+              <p>The stated goal is to output decisions and probabilities whose higher values correspond to higher empirical accuracy.</p>
+            </div>
+            <div class="unknown-box" style="margin-top:18px;">
+              <strong>Not public:</strong> reward construction, complete loss, sampling, baseline, dataset mix, calibration fitting, or ablations.
+            </div>
+            <div class="statement" style="margin-top:18px; font-size:24px;">Laya and Clef disclose their own RLCD-like recipes—not TypeSafe’s.</div>
+          </div>
+          <div class="grid two" style="gap:12px;">
+            <div class="panel"><h3>Supervised classification</h3><p class="small">Minimizes cross-entropy against labels; usually optimizes the correct class.</p></div>
+            <div class="panel"><h3>Contrastive learning</h3><p class="small">Pulls state–correct-candidate pairs together and pushes negatives apart; focuses on representation and ranking.</p></div>
+            <div class="panel"><h3>Preference optimization</h3><p class="small">Raises the score of a preferred output relative to rejected outputs.</p></div>
+            <div class="panel"><h3>Reinforcement learning</h3><p class="small">Updates a policy from reward. TypeSafe has not disclosed RLCD’s reward, optimizer, baseline, or update rule.</p></div>
+            <div class="panel" style="grid-column:1 / -1;"><h3>Probability calibration</h3><p class="small">Can be part of the training objective or post-hoc temperature scaling. Those are not the same thing.</p></div>
+          </div>
+        </div>
+        <aside class="presenter-notes" lang="zh-Hant">
+          <p><strong>時間：</strong> 1:35</p>
+          <p><strong>只講可驗證的事：</strong> TypeSafe 公開了縮寫與高階目標，但沒有公式。不要把 Laya 的 proper scoring rule 加 REINFORCE，或 Clef 的 Brier 與 reference penalty，說成 Jev 的做法。</p>
+          <p><strong>合理假設：</strong> 可能的目標包括：讓正確候選排名更高、提高不同問法之間的一致性、改善 confidence 品質，以及改善拒答行為。這四項都要標成推論。</p>
+          <p><strong>轉場：</strong> 公司公開了合約與高階目標，所以社群能用熟悉的元件，很快做出類似系統。</p>
+        </aside>
+        <footer class="source-footer">
+          <details><summary>Sources: TypeSafe AI primer, Laya model card, and Cloudflare Clef</summary><div class="source-pop">
+            <a href="https://docs.typesafe.ai/introduction/machine-learning-primer" target="_blank" rel="noreferrer">TypeSafe: RLCD definition</a>
+            <a href="https://huggingface.co/convaiinnovations/laya" target="_blank" rel="noreferrer">Laya: its own RLCD recipe</a>
+            <a href="https://blog.cloudflare.com/clef-decision-models/" target="_blank" rel="noreferrer">Cloudflare: Clef training</a>
+          </div></details><span class="slide-id">08</span>
+        </footer>
+      </section>
+
+      <section class="slide" data-short="Open projects copy the contract, not Jev’s internals" aria-label="Slide 9">
+        <div class="eyebrow">Direct answer #2</div>
+        <h2>Open projects reproduce the contract—not Jev’s undisclosed architecture</h2>
+        <div class="grid three" style="margin-top:34px;">
+          <article class="panel cyan-line">
+            <span class="badge official">Public and reproducible</span>
+            <h3 style="margin-top:14px;">Interface behavior</h3>
+            <ul class="small"><li>state + typed questions</li><li>Choice, Score, Noul shapes</li><li>probabilities and confidence fields</li><li><code>/v1/systemone</code> compatibility</li></ul>
+          </article>
+          <article class="panel purple-line">
+            <span class="badge open">Independent approaches</span>
+            <h3 style="margin-top:14px;">Alternative implementations</h3>
+            <ul class="small"><li>Laya: ModernBERT + custom head</li><li>Clef: Qwen3.5 + joint schema head</li><li>CLM: dual encoders + InfoNCE</li><li>AutoJev / Jeff: trained readouts</li></ul>
+          </article>
+          <article class="panel red-line">
+            <span class="badge unverified">Not established</span>
+            <h3 style="margin-top:14px;">Capability equivalence</h3>
+            <ul class="small"><li>Jev backbone or output head</li><li>TypeSafe’s RLCD recipe or data</li><li>broad zero-shot parity</li><li>cross-domain calibration</li><li>OOD and long-tail reliability</li></ul>
+          </article>
+        </div>
+        <div class="statement" style="margin-top:26px; font-size:26px;">“Jev-compatible” means wire-format compatibility. It does not mean an architectural reproduction or matched capability.</div>
+        <aside class="presenter-notes" lang="zh-Hant">
+          <p><strong>時間：</strong> 1:30</p>
+          <p><strong>直接回答：</strong> 公開的 request/response 合約，足以開發相容軟體，也足以訓練替代決策模型；但不足以重建 Jev。</p>
+          <p><strong>證據界線：</strong> TypeSafe 沒有公開 Jev 的 head 或訓練演算法。Laya、Clef、CLM、AutoJev 與 Jeff 公開的是不同設計。它們證明可行設計很多，不代表成功複製了 Jev 架構。</p>
+          <p><strong>能力界線：</strong> 廣泛的 zero-shot 泛化、跨領域穩健校準，以及 long-tail 可靠性，都只是待評估目標。不要說成 Jev 已證明具備，或開源專案已證明無法複製。</p>
+          <p><strong>轉場：</strong> 比較生態系之前，先把每個專案分類：它是模型、runtime、gateway，還是 baseline？</p>
+        </aside>
+        <footer class="source-footer">
+          <details><summary>Sources: TypeSafe architecture boundary and independent implementation designs</summary><div class="source-pop">
+            <a href="https://news.ycombinator.com/item?id=49717558" target="_blank" rel="noreferrer">TypeSafe CEO: architecture remains undisclosed</a>
+            <a href="https://huggingface.co/convaiinnovations/laya" target="_blank" rel="noreferrer">Laya model card</a>
+            <a href="https://github.com/denis-pplx/autojev" target="_blank" rel="noreferrer">AutoJev-27B repo</a>
+            <a href="https://huggingface.co/Cloudflare/clef-flash" target="_blank" rel="noreferrer">Clef-Flash model card</a>
+            <a href="https://github.com/Contrastive-LM/CLM" target="_blank" rel="noreferrer">CLM repository</a>
+          </div></details><span class="slide-id">09</span>
+        </footer>
+      </section>
+
+      <section class="slide compact" data-short="The ecosystem is not all models" aria-label="Slide 10">
+        <div class="eyebrow">Verified ecosystem</div>
+        <h2>“Jev-compatible” spans models, runtimes, adapters, and baselines</h2>
+        <div class="table-wrap">
+          <table aria-label="Comparison of Jev and the open-source ecosystem">
+            <thead><tr><th>Project</th><th>Category</th><th>Backbone / core</th><th>Open weights</th><th>Fine-tuning</th><th>Jev API</th><th>Main limitation</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Jev 1.13</strong></td><td>Hosted model</td><td>Undisclosed</td><td>No</td><td>No per-account weights</td><td>Native</td><td>Architecture, data, RLCD recipe, and serving stack undisclosed</td></tr>
+              <tr><td><strong>Laya</strong></td><td>Model family + runtime</td><td>ModernBERT-large 421M; mmBERT 322M</td><td>Yes</td><td>Supported</td><td>Compatible</td><td>Base typed-decisions result is below the majority baseline; calibration must be refit</td></tr>
+              <tr><td><strong>Ollaya</strong></td><td>Runtime + registry</td><td>ONNX / llama.cpp; serves multiple models</td><td>—</td><td>Model-dependent</td><td>Compatible</td><td>Not a model; capability depends on the backend</td></tr>
+              <tr><td><strong>Jeff</strong></td><td>Model family + adapters</td><td>Qwen3.5 0.8B/2B; Gemma 4 E2B</td><td>Yes</td><td>Yes; adapters are central</td><td>Compatible</td><td>Author benchmarks show small models trail on reasoning-heavy tasks</td></tr>
+              <tr><td><strong>AutoJev-27B</strong></td><td>Model + training/server</td><td>Qwen3.8-27B full SFT</td><td>Published*</td><td>Full-weight trained</td><td>Compatible</td><td>~49 GiB BF16 weights; exact curated corpus not bundled</td></tr>
+              <tr><td><strong>CLM</strong></td><td>Model/method + server</td><td>Two frozen Qwen3-8B encoders + 20M head each</td><td>Yes</td><td>Yes</td><td>Compatible</td><td>Contrastive choice/ranking design, not the full Jev primitive set</td></tr>
+              <tr><td><strong>Clef-Flash</strong></td><td>Multimodal model</td><td>Qwen3.5-9B + joint schema head</td><td>Yes</td><td>Post-trained; tunable</td><td>Compatible</td><td>New release; comparisons are mostly author benchmarks</td></tr>
+              <tr><td><strong>ModernCE</strong></td><td>NLI cross-encoder baseline</td><td>ModernBERT NLI</td><td>Yes</td><td>Optional</td><td>No; wrapper needed</td><td>Not a JEV clone; scores candidates independently</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="tiny muted" style="margin-top:10px;">*AutoJev lists Apache-2.0 weights but currently says authentication may be required. Naming trap: <code>thinkany-ai/autojev</code> is a desktop model-routing gateway—not <code>denis-pplx/autojev-27b</code>.</p>
+        <aside class="presenter-notes" lang="zh-Hant">
+          <p><strong>時間：</strong> 1:40</p>
+          <p><strong>講法：</strong> 不要逐列朗讀。只講三件事：Ollaya 是 runtime；ModernCE 是 baseline；AutoJev 有同名混淆。API 相容不等於能力等價。</p>
+          <p><strong>時效性：</strong> 這張表在 2026-10-11 重新查核。repository 變化很快，任何 benchmark 或部署結論都要固定版本。</p>
+          <p><strong>轉場：</strong> Laya 最能說明這個模式為什麼容易重做，也最能說明我們為什麼不能過度外推。</p>
+        </aside>
+        <footer class="source-footer">
+          <details><summary>Sources: official docs, original repositories, and model cards</summary><div class="source-pop">
+            <a href="https://docs.typesafe.ai/models" target="_blank" rel="noreferrer">Jev models documentation</a>
+            <a href="https://huggingface.co/convaiinnovations/laya" target="_blank" rel="noreferrer">Laya</a>
+            <a href="https://github.com/ollaya-dev/ollaya" target="_blank" rel="noreferrer">Ollaya</a>
+            <a href="https://github.com/firelex/jeff" target="_blank" rel="noreferrer">Jeff</a>
+            <a href="https://github.com/denis-pplx/autojev" target="_blank" rel="noreferrer">AutoJev-27B</a>
+            <a href="https://github.com/Contrastive-LM/CLM" target="_blank" rel="noreferrer">CLM</a>
+            <a href="https://huggingface.co/Cloudflare/clef-flash" target="_blank" rel="noreferrer">Clef-Flash</a>
+            <a href="https://huggingface.co/dleemiller/ModernCE-large-nli" target="_blank" rel="noreferrer">ModernCE</a>
+          </div></details><span class="slide-id">10</span>
+        </footer>
+      </section>
+
+      <section class="slide compact" data-short="Laya is evidence about Laya—not JEV internals" aria-label="Slide 11">
+        <div class="eyebrow">Case study · evidence boundary</div>
+        <h2>Laya is inspectable evidence for one open implementation—not a disclosure of JEV</h2>
+        <div class="boundary-grid">
+          <article class="boundary-card open-card">
+            <span class="badge open">Code-confirmed</span>
+            <h3>What we can inspect</h3>
+            <p>ModernBERT-large, a two-layer Transformer decision head, option markers, a shared scorer, temperature scaling, and a separate act head.</p>
+          </article>
+          <article class="boundary-card">
+            <span class="badge self">Author-reported</span>
+            <h3>What its results say</h3>
+            <p><code>typed-decisions</code> accuracy rises from 0.362 to 0.766 after domain tuning. The tuned card reports ECE 0.213 and says calibration must be refit.</p>
+          </article>
+          <article class="boundary-card danger-card">
+            <span class="badge official">Not established</span>
+            <h3>What we cannot transfer to JEV</h3>
+            <p>TypeSafe has not confirmed ModernBERT, <code>[MASK]</code> markers, Laya’s head, its training data, or its RLCD implementation as JEV internals.</p>
+          </article>
+        </div>
+        <div class="statement boundary-statement">Next: trace one real request through Laya’s public code. Treat the walkthrough as <strong>Laya implementation detail</strong>, not a reverse-engineered JEV diagram.</div>
+        <aside class="presenter-notes" lang="zh-Hant">
+          <p><strong>時間：</strong> 1:15</p>
+          <p><strong>一定要說：</strong> 接下來兩頁的每一個架構細節都屬於 Laya。這是公開程式碼可以稽核的 open implementation，不是 TypeSafe 對 Jev 內部架構的揭露。</p>
+          <p><strong>證據層級：</strong> backbone、head、marker、scorer 與 act head 是 code-confirmed；0.362、0.766 與 ECE 0.213 是作者在 model card 自報的結果。</p>
+          <p><strong>轉場：</strong> 接著不用抽象方塊圖，而是拿便利商店的一筆 request，逐步重建 <code>build_sequence</code> 真正送進模型的內容。</p>
+        </aside>
+        <footer class="source-footer">
+          <details><summary>Sources: Laya’s original model card and repository</summary><div class="source-pop">
+            <a href="https://huggingface.co/convaiinnovations/laya" target="_blank" rel="noreferrer">Laya model card</a>
+            <a href="https://github.com/NandhaKishorM/laya" target="_blank" rel="noreferrer">Laya GitHub</a>
+          </div></details><span class="slide-id">11</span>
+        </footer>
+      </section>
+
+      <section class="slide compact dense" data-short="Inside Laya: construct one real request" aria-label="Slide 12">
+        <div class="eyebrow">Laya technical deep dive · input construction</div>
+        <h2>Inside Laya: From State &amp; Question to Decision</h2>
+        <div class="construction-grid">
+          <div class="input-pair">
+            <article class="mini-code-card">
+              <div class="mini-code-head"><span>Input state</span><span class="badge open">Python dict</span></div>
+              <pre><code>{
+  "customer_request": "I want a hot latte.",
+  "coffee_machine": "available",
+  "queue_length": 3, "milk_stock": 10
+}</code></pre>
+            </article>
+            <article class="mini-code-card">
+              <div class="mini-code-head"><span>Input question</span><span class="badge open"><code>type: choice</code></span></div>
+              <pre><code>{
+  "instructions": "What should the clerk do next?",
+  "criteria": {
+    "make_coffee": "Prepare the requested latte",
+    "checkout": "Process payment", "restock": "Restock inventory",
+    "ask_customer": "Ask for clarification"
+  }
+}</code></pre>
+            </article>
+          </div>
+          <article class="build-rules">
+            <span class="badge open">Verified in source</span>
+            <h3><code>_to_internal</code> → <code>build_sequence</code></h3>
+            <ol>
+              <li>Render the instruction as <code>choice question: {instructions}</code>.</li>
+              <li>Render each criterion as <code>key: description</code>; tokenize it with a leading space and cap its text at 48 tokens.</li>
+              <li>Insert one <code>[MASK]</code> token ID before every option; record its current sequence index in <code>marker_pos</code>.</li>
+              <li>Serialize a non-string state with <code>json.dumps(..., ensure_ascii=False)</code>, then tokenize it.</li>
+            </ol>
+          </article>
+        </div>
+        <div class="sequence-box" role="img" aria-label="Human-readable structural illustration of the exact sequence layout used by Laya">
+          <div class="sequence-label"><span>Stage A · tokenizer &amp; sequence construction</span><span>human-readable structure—not literal tokenizer tokens</span></div>
+          <div class="sequence-line"><span class="seq-special">[CLS]</span><span class="seq-question">choice question: What should the clerk do next?</span><span class="seq-special">[SEP]</span></div>
+          <div class="sequence-line options-line"><span class="seq-option"><b>[MASK]</b> make_coffee: Prepare the requested latte</span><span class="seq-option"><b>[MASK]</b> checkout: Process payment</span><span class="seq-option"><b>[MASK]</b> restock: Restock inventory</span><span class="seq-option"><b>[MASK]</b> ask_customer: Ask for clarification</span></div>
+          <div class="sequence-line"><span class="seq-special">[SEP]</span><span class="seq-state">{"customer_request": "I want a hot latte.", "coffee_machine": "available", "queue_length": 3, "milk_stock": 10}</span><span class="seq-special">[SEP]</span></div>
+        </div>
+        <div class="construction-footer">
+          <div class="tensor-contract"><span><code>input_ids</code> <b>[B,L]</b></span><span><code>attention_mask</code> <b>[B,L]</b></span><span><code>marker_pos</code> <b>[B,K]</b></span><span><code>marker_mask</code> <b>[B,K]</b></span><span><code>qtype</code> <b>[B]</b></span></div>
+          <div class="budget-note"><strong>This example:</strong> <code>B=1</code>, <code>K=4</code>; <code>L</code> depends on tokenization. English defaults: <code>max_len=512</code>, <code>head_max_len=192</code>. The API keeps the start of the state when room runs out. <code>marker_pos</code> contains positions—not token IDs or embeddings.</div>
+        </div>
+        <aside class="presenter-notes" lang="zh-Hant">
+          <p><strong>時間：</strong> 2:00</p>
+          <p><strong>先看 request：</strong> 外部 API 收到的是 state 與 typed question。<code>_to_internal</code> 保留字串 instruction，並把 choice criteria 正規化成有順序的 mapping。</p>
+          <p><strong>精確格式：</strong> <code>build_sequence</code> 不是把原始 JSON 直接丟進 ModernBERT。它先建立 <code>choice question: What should the clerk do next?</code>，再加上候選選項與 state。特殊 token 是程式手動插入；其他片段都使用 <code>add_special_tokens=False</code>。</p>
+          <p><strong>Marker：</strong> 每次把一個 option 加到 sequence 之前，程式先記錄目前的 <code>len(ids)</code>，所以 <code>marker_pos</code> 是 sequence position。它不是 <code>mask_token_id</code>，也不是 learned embedding。</p>
+          <p><strong>截短規則：</strong> 每個 option 文字先限制為 48 tokens；整個 question-and-options head 共用 192-token budget。若選項仍太長，會再平均縮短。最後 state 只填滿 512-token sequence 剩下的空間；API 預設保留 state 前段。若 marker 數量少於 option 數量，API 會直接報錯。</p>
+          <p><strong>誠實標示：</strong> 這裡沒有寫 marker 的實際數字，因為本頁顯示的是結構示意，不是假裝 tokenizer tokenization 結果。</p>
+          <p><strong>轉場：</strong> 現在 tensors 已經組好。下一頁最重要的是執行順序：先走完 encoder 與 decision head，之後才 gather marker。</p>
+        </aside>
+        <footer class="source-footer">
+          <details><summary>Sources: Laya model files and implementation</summary><div class="source-pop">
+            <a href="https://huggingface.co/convaiinnovations/laya/blob/main/rl_common.py" target="_blank" rel="noreferrer">Laya <code>rl_common.py</code></a>
+            <a href="https://huggingface.co/convaiinnovations/laya/blob/main/rl_agent_config.json" target="_blank" rel="noreferrer">English checkpoint config</a>
+            <a href="https://huggingface.co/convaiinnovations/laya" target="_blank" rel="noreferrer">Laya model card</a>
+          </div></details><span class="slide-id">12</span>
+        </footer>
+      </section>
+
+      <section class="slide compact dense" data-short="Inside Laya: head first, gather second" aria-label="Slide 13">
+        <div class="eyebrow">Laya technical deep dive · forward pass</div>
+        <h2>Inside Laya: The Full Sequence Is Transformed Before Options Are Gathered</h2>
+        <div class="ordering-callout"><strong>Execution order:</strong> ModernBERT → type embedding → <em>two full-sequence Transformer layers</em> → gather markers → shared scorer → temperature + softmax</div>
+        <div class="forward-grid" role="img" aria-label="Laya forward pass from the ModernBERT encoder through question type embedding, two-layer decision head, marker gathering, shared scoring, and calibrated probabilities">
+          <article class="forward-stage cyan-border">
+            <span class="stage-letter">B</span><h3>ModernBERT encoder</h3>
+            <code>h = encoder(...)<br>.last_hidden_state</code>
+            <strong>[B,L,D]</strong><p>Bidirectional attention contextualizes every token against the question, options, and state.</p>
+          </article>
+          <div class="forward-arrow">→</div>
+          <article class="forward-stage">
+            <span class="stage-letter">C</span><h3>Question-type embedding</h3>
+            <code>h += type_emb(qtype)[:,None,:]</code>
+            <strong>[B,L,D]</strong><p>One learned choice/score/noul vector is broadcast across all token positions.</p>
+          </article>
+          <div class="forward-arrow">→</div>
+          <article class="forward-stage purple-border head-stage">
+            <span class="stage-letter">D</span><h3>Decision head × 2</h3>
+            <code>h = layer(h, src_key_padding_mask=pad)</code>
+            <strong>[B,L,D]</strong><p>Two Transformer encoder layers attend over the complete sequence. <b>No marker extraction yet.</b></p>
+          </article>
+          <div class="forward-arrow priority-arrow">→</div>
+          <article class="forward-stage gather-stage">
+            <span class="stage-letter">E</span><h3>Gather marker states</h3>
+            <code>m = torch.gather(h, 1, idx)</code>
+            <strong>[B,K,D]</strong><p>Select <code>h[marker₀…marker₃]</code>. The operation is differentiable; gradients reach the selected states.</p>
+          </article>
+          <div class="forward-arrow">→</div>
+          <article class="forward-stage">
+            <span class="stage-letter">F</span><h3>Shared MLP scorer</h3>
+            <code>logits = scorer(m).squeeze(-1)</code>
+            <strong>[B,K]</strong><p>The same LayerNorm → Linear → GELU → Linear scorer maps every option embedding to one scalar.</p>
+          </article>
+          <div class="forward-arrow">→</div>
+          <article class="forward-stage green-border probability-stage">
+            <span class="stage-letter">G</span><h3>Temperature + softmax</h3>
+            <code>p = softmax(logits / T)</code>
+            <div class="mini-probs"><span><i style="width:72%"></i><b>make_coffee</b><em>0.72</em></span><span><i style="width:18%"></i><b>checkout</b><em>0.18</em></span><span><i style="width:3%"></i><b>restock</b><em>0.03</em></span><span><i style="width:7%"></i><b>ask_customer</b><em>0.07</em></span></div>
+            <div class="fiction-label">Fictional probabilities—not model output</div>
+          </article>
+        </div>
+        <div class="forward-bottom">
+          <div class="decision-result"><span>Illustrative selected action</span><strong>make_coffee</strong></div>
+          <article class="act-head-panel">
+            <span class="badge open">Separate branch</span>
+            <h3>Act / escalate head</h3>
+            <p>Pooled <code>[CLS]</code> + detached top-1 probability + top-1/top-2 gap + normalized entropy + <code>K/255</code> → independent MLP logits. The API exposes <code>act_probability</code>; the code alone does not establish it as calibrated correctness.</p>
+          </article>
+          <div class="speed-note"><strong>No decoding loop.</strong> One batched, bidirectional pass produces option scores—but compute still grows with sequence length, batch size, and question count.</div>
+        </div>
+        <aside class="presenter-notes" lang="zh-Hant">
+          <p><strong>時間：</strong> 2:15</p>
+          <p><strong>Tensor 記號：</strong> <code>B</code> 是 batch 裡的 question rows；<code>L</code> 是 padding 後的 sequence length；<code>D</code> 是 hidden width；<code>K</code> 是 batch 裡 padding 後的最大選項數。</p>
+          <p><strong>最重要的順序：</strong> ModernBERT 先輸出所有 token 的 hidden states，接著把同一個 qtype embedding 加到每個 position。然後完整的 <code>[B,L,D]</code> sequence 再通過兩層 Transformer decision head。直到這兩層全部完成，才依照 <code>marker_pos</code> gather。</p>
+          <p><strong>不要混淆：</strong> decision head 本身不是 marker extraction。<code>torch.gather</code> 只是從已經被 decision head 更新過的 sequence 中，取出 K 個 marker position 的向量；它仍可微分，gradient 會回到被選中的 hidden states 與上游網路。</p>
+          <p><strong>Scorer 與 probability：</strong> 同一個 MLP 對每個 option vector 打一個 scalar。API 再依 question type 與選項數選 temperature，做 softmax。本頁 0.72、0.18、0.03、0.07 完全是示意數字，不是實際 checkpoint inference。</p>
+          <p><strong>Act head：</strong> 這是另一條 branch。它看 pooled CLS，以及從 option distribution detach 出來的 top-1、margin、entropy 和選項數。API 的欄位名稱是 <code>act_probability</code>；不能因此把它當成已校準的正確率。</p>
+          <p><strong>速度：</strong> 沒有 autoregressive answer-token loop，所以 bounded decision 可以很快；但 encoder 和兩層 head 仍處理整段 sequence，並不是 constant-time。</p>
+          <p><strong>轉場：</strong> inference path 現在已經完整。下一個 provenance 問題是：什麼 supervision 讓這些 logits 對應到我們要的決策？</p>
+        </aside>
+        <footer class="source-footer">
+          <details><summary>Sources: exact sequence, forward pass, and API decoding code</summary><div class="source-pop">
+            <a href="https://huggingface.co/convaiinnovations/laya/blob/main/rl_common.py" target="_blank" rel="noreferrer"><code>build_sequence</code> and <code>DecisionModel.forward</code></a>
+            <a href="https://huggingface.co/convaiinnovations/laya/blob/main/rl_agent_api.py" target="_blank" rel="noreferrer"><code>RLAgent.system_one</code></a>
+          </div></details><span class="slide-id">13</span>
+        </footer>
+      </section>
+
+      <section class="slide compact dense" data-short="Typed-decisions is a domain fine-tuning set" aria-label="Slide 14">
+        <div class="eyebrow">Laya technical deep dive · data provenance</div>
+        <h2><code>typed-decisions</code> is a four-workflow fine-tuning set—not Laya’s full training corpus</h2>
+        <div class="data-pipeline" role="img" aria-label="Typed-decisions synthetic data and teacher labeling pipeline">
+          <div class="pipeline-step"><b>1</b><strong>Sample latent factors</strong><span>topic · tone · severity · discrepancy</span></div><div class="pipeline-arrow">→</div>
+          <div class="pipeline-step"><b>2</b><strong>Generate scenario</strong><span>textual or structured artefact</span></div><div class="pipeline-arrow">→</div>
+          <div class="pipeline-step"><b>3</b><strong>Build state + 5 questions</strong><span>Jev request shape</span></div><div class="pipeline-arrow">→</div>
+          <div class="pipeline-step"><b>4</b><strong>Teacher × 3</strong><span>temperature 0.7</span></div><div class="pipeline-arrow">→</div>
+          <div class="pipeline-step"><b>5</b><strong>Average distributions</strong><span>soft gold labels</span></div><div class="pipeline-arrow">→</div>
+          <div class="pipeline-step"><b>6</b><strong>Separate train / test runs</strong><span>different seeds; overlap refused</span></div>
+        </div>
+        <div class="grid asym" style="margin-top:18px;">
+          <div class="table-wrap compact-table">
+            <table aria-label="Typed-decisions workflow sizes">
+              <thead><tr><th>Workflow</th><th>Train cases</th><th>Test cases</th></tr></thead>
+              <tbody>
+                <tr><td>Agent Trace Observability</td><td>300</td><td>100</td></tr>
+                <tr><td>Customer Service</td><td>300</td><td>100</td></tr>
+                <tr><td>Invoice Processing</td><td>300</td><td>100</td></tr>
+                <tr><td>Security Incidents</td><td>300</td><td>100</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div>
+            <div class="dataset-totals">
+              <div><strong>1,200</strong><span>train cases</span></div>
+              <div><strong>400</strong><span>test cases</span></div>
+              <div><strong>6,000</strong><span>train decisions</span></div>
+              <div><strong>2,000</strong><span>test decisions</span></div>
+            </div>
+            <div class="panel" style="margin-top:12px;"><h3>Latent factors are controllable hidden knobs</h3><p class="small">Sampling cause-level variables before writing the scenario creates deliberate coverage of rare combinations. The released <code>factors</code> describe generation; they are not model input.</p></div>
+          </div>
+        </div>
+        <div class="statement danger compact-statement">Provenance boundary: this dataset documents one domain fine-tuning experiment. It does not disclose the complete data recipe used to create the original Laya checkpoint.</div>
+        <aside class="presenter-notes" lang="zh-Hant">
+          <p><strong>時間：</strong> 1:45</p>
+          <p><strong>數量：</strong> 四個 workflow，各有 300 個 train case 和 100 個 test case。每個 case 包含五個 typed decision，因此共有 6,000 個訓練決策與 2,000 個測試決策。</p>
+          <p><strong>Soft gold：</strong> dataset card 表示，一個約 4B 等級的 teacher 會在 temperature 0.7 下，替每個 case 標記三次，再平均三次分布。公開文件無法確認 teacher 的身分，也無法確認完整生成 prompt。</p>
+          <p><strong>Leakage 控制：</strong> train set 來自另一個 seed 的獨立生成；封裝流程也拒絕跨 split 重複的 case ID 或 state。</p>
+          <p><strong>轉場：</strong> 用一個 customer-service 例子，看平均分布保留了什麼，又繼承了什麼。</p>
+        </aside>
+        <footer class="source-footer">
+          <details><summary>Sources: typed-decisions dataset card and fine-tuning notebook</summary><div class="source-pop">
+            <a href="https://huggingface.co/datasets/LocalLLaMA/typed-decisions" target="_blank" rel="noreferrer">Dataset card and workflow counts</a>
+            <a href="https://github.com/NandhaKishorM/laya/blob/main/notebooks/laya_finetune_typed_decisions_2xT4_kaggle.ipynb" target="_blank" rel="noreferrer">Current fine-tuning notebook</a>
+          </div></details><span class="slide-id">14</span>
+        </footer>
+      </section>
+
+      <section class="slide compact dense" data-short="Soft labels preserve uncertainty—and teacher error" aria-label="Slide 15">
+        <div class="eyebrow">Laya technical deep dive · one training case</div>
+        <h2>Soft labels preserve teacher uncertainty—and inherit teacher error</h2>
+        <div class="grid asym" style="margin-top:4px;">
+          <div class="code-panel example-json">
+            <div class="code-head"><span>Illustrative customer-service input</span><span class="badge inference">Not a dataset row</span></div>
+            <pre class="code-snippet"><code>{&#10;  <span class="syn-key">"state"</span>: {&#10;    <span class="syn-key">"message"</span>: <span class="syn-str">"I was charged twice. Refund me&#10;    or I'll cancel."</span>&#10;  },&#10;  <span class="syn-key">"questions"</span>: {&#10;    <span class="syn-key">"department"</span>: {&#10;      <span class="syn-key">"type"</span>: <span class="syn-str">"choice"</span>,&#10;      <span class="syn-key">"instructions"</span>: <span class="syn-str">"Which department&#10;      should handle this?"</span>,&#10;      <span class="syn-key">"criteria"</span>: {&#10;        <span class="syn-key">"billing"</span>: <span class="syn-str">"Payments and refunds"</span>,&#10;        <span class="syn-key">"technical"</span>: <span class="syn-str">"Technical problems"</span>,&#10;        <span class="syn-key">"general"</span>: <span class="syn-str">"Other requests"</span>&#10;      }&#10;    }&#10;  }&#10;}</code></pre>
+          </div>
+          <div>
+            <div class="teacher-stack" aria-label="Three illustrative teacher distributions and their average">
+              <div class="teacher-row"><span>Teacher sample 1</span><div class="mini-bars"><i style="--p:90%"></i><i style="--p:5%"></i><i style="--p:5%"></i></div><code>[0.90, 0.05, 0.05]</code></div>
+              <div class="teacher-row"><span>Teacher sample 2</span><div class="mini-bars"><i style="--p:80%"></i><i style="--p:10%"></i><i style="--p:10%"></i></div><code>[0.80, 0.10, 0.10]</code></div>
+              <div class="teacher-row"><span>Teacher sample 3</span><div class="mini-bars"><i style="--p:85%"></i><i style="--p:5%"></i><i style="--p:10%"></i></div><code>[0.85, 0.05, 0.10]</code></div>
+              <div class="average-arrow">average each option ↓</div>
+              <div class="teacher-row gold-row"><span>Soft gold</span><div class="mini-bars"><i style="--p:85%"></i><i style="--p:6.7%"></i><i style="--p:8.3%"></i></div><code>[0.850, 0.067, 0.083]</code></div>
+            </div>
+            <div class="grid two" style="gap:12px; margin-top:12px;">
+              <div class="panel cyan-line"><h3>More signal than argmax</h3><p class="small">The target encodes both the preferred answer and how much probability the teacher left on alternatives.</p></div>
+              <div class="panel red-line"><h3>Not ground truth</h3><p class="small">Agreement rewards the teacher’s distribution—even when the teacher misunderstands the scenario.</p></div>
+            </div>
+          </div>
+        </div>
+        <div class="limitation-strip"><span>teacher bias</span><span>teacher disagreement</span><span>label noise</span><span>synthetic → real shift</span><span>agreement ≠ correctness</span></div>
+        <aside class="presenter-notes" lang="zh-Hant">
+          <p><strong>時間：</strong> 1:25</p>
+          <p><strong>標示：</strong> 這裡的 message、question 與三組分布都是示意資料。它們只用來說明文件描述的平均流程，不是從公開 record 複製的內容。</p>
+          <p><strong>Soft label 為什麼重要：</strong> 如果只保留 hard label「billing」，相對不確定性就消失了。完整分布可以監督排名和 probability shape，也能用於 log loss、Brier、KL 與 calibration 分析。</p>
+          <p><strong>關鍵限制：</strong> dataset 自己就提醒：這個分數量的是 teacher agreement，不是 correctness。文件至少記錄了一筆 teacher 漏掉的重複發票案例。</p>
+          <p><strong>轉場：</strong> Laya 並不只對這個分布最小化 cross-entropy。notebook 還加入 noisy-logit 的 policy-gradient objective。</p>
+        </aside>
+        <footer class="source-footer">
+          <details><summary>Sources: documented soft-label procedure and score interpretation</summary><div class="source-pop">
+            <a href="https://huggingface.co/datasets/LocalLLaMA/typed-decisions" target="_blank" rel="noreferrer">typed-decisions: construction and “Reading a score”</a>
+          </div></details><span class="slide-id">15</span>
+        </footer>
+      </section>
+
+      <section class="slide compact dense" data-short="RLCD notebook: policy gradient plus soft CE" aria-label="Slide 16">
+        <div class="eyebrow">Laya technical deep dive · training objective</div>
+        <h2>Laya’s typed-decisions notebook optimizes a hybrid—not “pure RL”</h2>
+        <div class="grid asym-reverse" style="margin-top:0;">
+          <div class="equation-stack">
+            <div class="equation-card"><span>Log scoring rule</span><div>R<sub>log</sub> = Σ<sub>i</sub> y<sub>i</sub> log p<sub>i</sub></div></div>
+            <div class="equation-card"><span>Spherical scoring rule</span><div>R<sub>sph</sub> = (Σ<sub>i</sub> y<sub>i</sub>p<sub>i</sub>) / √(Σ<sub>j</sub> p<sub>j</sub><sup>2</sup>)</div></div>
+            <div class="equation-card"><span>Ordinal <code>score</code> questions only</span><div>R<sub>RPS</sub> = −(1/(K−1)) Σ<sub>j</sub>(F<sub>p</sub>(j)−F<sub>y</sub>(j))<sup>2</sup></div></div>
+            <div class="combined-reward">Notebook reward: <strong>R = R<sub>log</sub> + 0.75R<sub>sph</sub> + R<sub>RPS</sub></strong></div>
+          </div>
+          <div>
+            <div class="objective-flow" role="img" aria-label="RLCD notebook training flow">
+              <div><b>1</b><span>Logits</span><small>current policy</small></div><i>+</i>
+              <div><b>2</b><span>Gaussian noise</span><small>4 samples; σ 0.4 → 0.1</small></div><i>→</i>
+              <div><b>3</b><span>Proper-rule reward</span><small>against soft target</small></div><i>→</i>
+              <div><b>4</b><span>Group-mean baseline</span><small>normalize advantage</small></div><i>→</i>
+              <div><b>5</b><span>REINFORCE term</span><small>Gaussian log density</small></div>
+            </div>
+            <div class="plus-loss">+ full soft-label cross-entropy on the unperturbed logits</div>
+            <div class="grid two" style="gap:12px; margin-top:12px;">
+              <div class="panel"><span class="badge open">Published method</span><p class="small" style="margin-top:10px;">The model card describes Gaussian exploration, proper scoring rules, a group baseline, and—in base training—multi-turn TD(λ=1) over prefix slices.</p></div>
+              <div class="panel"><span class="badge open">Notebook executes</span><p class="small" style="margin-top:10px;">Independent typed-decision rows, hybrid <code>rlcd_loss</code> + soft CE, then temperature fitting on a held-out slice. Act logits are computed but absent from this loss.</p></div>
+            </div>
+          </div>
+        </div>
+        <div class="statement warning compact-statement">A strictly proper rule rewards truthful probabilities in expectation under its assumptions. Finite data, optimization error, model misspecification, teacher noise, and domain shift can still leave the trained model miscalibrated.</div>
+        <aside class="presenter-notes" lang="zh-Hant">
+          <p><strong>時間：</strong> 2:10</p>
+          <p><strong>Ranked probability score：</strong> 對有順序的 <code>score</code> 問題，程式比較預測與目標的累積分布。因此，把相鄰等級搞混的懲罰，比把機率質量移過整個量表更小。</p>
+          <p><strong>REINFORCE 細節：</strong> 每個 option row 會加入四組零均值 Gaussian perturbation。reward 減掉 sample-group mean 後，形成 normalized advantage，再用來加權 Gaussian log density。</p>
+          <p><strong>混合目標修正：</strong> notebook 標題寫的是「pure policy gradients」，但真正呼叫的 <code>rlcd_loss</code> 明確加入了 <code>soft_ce_loss</code>。請以可執行程式為準，不要照標題講。</p>
+          <p><strong>Act-head 注意：</strong> notebook 收到 <code>logits, act</code>，但 loss 只使用 <code>logits</code>。所以這個實驗中，act head 本身的權重沒有收到直接的微調 gradient。</p>
+          <p><strong>Calibration：</strong> 現行 notebook 會在訓練前保留 10%，上限 400 筆，再於訓練後擬合 type/cardinality temperature。hosted checkpoint 早於這項修正，仍帶著繼承的 per-option override；model card 也要求先 refit，才能相信 confidence。</p>
+          <p><strong>轉場：</strong> 微調後的準確率提升，作為自報 benchmark 是真的；但這個結果把 loss 與 domain distillation 混在一起。</p>
+        </aside>
+        <footer class="source-footer">
+          <details><summary>Sources: Laya reward code, train code, notebook, and checkpoint limitations</summary><div class="source-pop">
+            <a href="https://huggingface.co/convaiinnovations/laya/blob/main/rl_common.py" target="_blank" rel="noreferrer"><code>proper_reward</code></a>
+            <a href="https://github.com/NandhaKishorM/laya/blob/main/laya/train.py" target="_blank" rel="noreferrer"><code>rlcd_loss</code> and calibration split</a>
+            <a href="https://github.com/NandhaKishorM/laya/blob/main/notebooks/laya_finetune_typed_decisions_2xT4_kaggle.ipynb" target="_blank" rel="noreferrer">2×T4 notebook</a>
+            <a href="https://huggingface.co/convaiinnovations/laya-typed-decisions" target="_blank" rel="noreferrer">Fine-tuned checkpoint card</a>
+          </div></details><span class="slide-id">16</span>
+        </footer>
+      </section>
+
+      <section class="slide compact dense" data-short="0.766 proves specialization—not RLCD superiority" aria-label="Slide 17">
+        <div class="eyebrow">Laya technical deep dive · critical benchmark</div>
+        <h2>The 0.766 result proves specialization—not that RLCD beat distillation</h2>
+        <div class="grid asym" style="margin-top:0;">
+          <div>
+            <div class="benchmark-bars" aria-label="Developer-reported typed-decisions accuracy">
+              <div class="benchmark-row"><span>Laya base · English</span><div><i style="--score:36.2%"></i></div><strong>0.362</strong></div>
+              <div class="benchmark-row"><span>Per-question majority</span><div><i class="baseline" style="--score:46.1%"></i></div><strong>0.461</strong></div>
+              <div class="benchmark-row winner"><span>Laya fine-tuned</span><div><i style="--score:76.6%"></i></div><strong>0.766</strong></div>
+            </div>
+            <div class="panel orange-line" style="margin-top:14px;">
+              <span class="badge self">Developer-reported</span>
+              <p class="small" style="margin:10px 0 0;">400 held-out cases · 2,000 decisions · four synthetic workflows. The tuned checkpoint trained on the corresponding 1,200-case / 6,000-decision train split.</p>
+            </div>
+            <div class="statement danger compact-statement" style="margin-top:12px;">Central question: how much of +0.404 comes from RLCD, and how much from domain-specific teacher distillation?</div>
+          </div>
+          <div>
+            <div class="ablation-table" role="table" aria-label="Controlled experiment to isolate RLCD effects">
+              <div class="ab-head">Controlled variant</div><div class="ab-head">What it isolates</div>
+              <div>ModernBERT + hard-label CE</div><div>ordinary supervised classification</div>
+              <div>ModernBERT + soft-label CE</div><div>teacher distribution distillation</div>
+              <div>ModernBERT + RLCD</div><div>policy-gradient effect</div>
+              <div>ModernBERT + RLCD + temperature</div><div>post-hoc calibration effect</div>
+            </div>
+            <div class="metrics-cloud"><span>Accuracy</span><span>NLL</span><span>Brier</span><span>ECE</span><span>Latency</span><span>OOD generalization</span></div>
+            <div class="panel" style="margin-top:12px;"><h3>Fair-test constraints</h3><p class="small">Use identical train/test cases, backbone initialization, option order, augmentation, optimizer budget, seeds, and stopping rules. Report calibration on a genuinely held-out split.</p></div>
+          </div>
+        </div>
+        <div class="statement warning compact-statement">Accuracy measures argmax agreement with the teacher-derived label. It does not establish factual correctness, superior calibration, or out-of-domain reliability.</div>
+        <aside class="presenter-notes" lang="zh-Hant">
+          <p><strong>時間：</strong> 1:45</p>
+          <p><strong>已經成立的結論：</strong> 依作者自報結果，微調模型在這個 dataset 的 test split 上，明顯勝過 base checkpoint 與 majority baseline。</p>
+          <p><strong>尚未成立的結論：</strong> 這個實驗同時改變 domain supervision 與 objective。公開資料沒有提供條件一致的 hard-CE、soft-CE、RLCD-only，以及 RLCD-plus-temperature ablation。</p>
+          <p><strong>Teacher ceiling 的細節：</strong> dataset 報告 teacher self-agreement 是 0.735。模型超過它，可能只是學到平均後 teacher 的規律或怪癖；不代表事實正確率超越 teacher。</p>
+          <p><strong>Calibration 的細節：</strong> hosted checkpoint 報告 Brier 0.062、ECE 0.213。model card 警告，繼承的 per-option temperature 蓋過了新擬合的 type temperature。必須用 held-out domain data 重新擬合。</p>
+          <p><strong>轉場：</strong> 這個警告直接帶到下一頁：輸出的機率到底承諾了什麼？</p>
+        </aside>
+        <footer class="source-footer">
+          <details><summary>Sources: fine-tuned model card, dataset score guide, and reproducible notebook</summary><div class="source-pop">
+            <a href="https://huggingface.co/convaiinnovations/laya-typed-decisions" target="_blank" rel="noreferrer">Reported benchmark and limitations</a>
+            <a href="https://huggingface.co/datasets/LocalLLaMA/typed-decisions" target="_blank" rel="noreferrer">Teacher agreement and score interpretation</a>
+            <a href="https://github.com/NandhaKishorM/laya/blob/main/notebooks/laya_finetune_typed_decisions_2xT4_kaggle.ipynb" target="_blank" rel="noreferrer">Fine-tuning notebook</a>
+          </div></details><span class="slide-id">17</span>
+        </footer>
+      </section>
+
+      <section class="slide compact" data-short="0.8 is a population claim, not a case guarantee" aria-label="Slide 18">
+        <div class="eyebrow">Calibration</div>
+        <h2>0.8 is a population statistic—not a promise about one case</h2>
+        <div class="grid asym-reverse">
+          <div class="reliability" role="img" aria-label="Illustrative calibration reliability diagram">
+            <div class="diag-line"></div><div class="rel-point"></div>
+            <div class="rel-note">Definition example: 0.8 bucket → roughly 80% correct<br><span class="tiny muted">Illustration, not a measured JEV point</span></div>
+            <span class="rel-x">Predicted probability</span><span class="rel-y">Empirical accuracy</span>
+          </div>
+          <div>
+            <div class="panel cyan-line">
+              <h3>How to read “calibrated”</h3>
+              <ol>
+                <li>Collect many cases assigned roughly 0.8</li>
+                <li>If about 80% are correct, that bucket is near-calibrated</li>
+                <li>No individual prediction can prove calibration</li>
+              </ol>
+            </div>
+            <div class="grid two" style="gap:10px; margin-top:12px;">
+              <div class="panel"><h3>Brier Score</h3><p class="small">Squared error between probability and outcome; lower is better.</p></div>
+              <div class="panel"><h3>ECE</h3><p class="small">Weighted confidence–accuracy gaps across bins; sensitive to binning.</p></div>
+              <div class="panel"><h3>Accuracy / Ranking</h3><p class="small">Whether the model chooses or ranks correctly; not whether probabilities are trustworthy.</p></div>
+              <div class="panel"><h3>Expected utility</h3><p class="small">Must also include payoff, cost, and the action policy.</p></div>
+            </div>
+            <div class="statement danger" style="margin-top:12px; font-size:22px;"><code>BUY: 0.8</code> does not mean “this trade has an 80% chance of profit.”</div>
+          </div>
+        </div>
+        <p class="tiny muted" style="margin-top:8px;">Not unless label definition, asset, holding period, cost model, strategy, and market regime match the validation set.</p>
+        <aside class="presenter-notes" lang="zh-Hant">
+          <p><strong>時間：</strong> 1:45</p>
+          <p><strong>核心：</strong> Calibration 是群體層級的性質。不同 domain、不同時間區段，以及不同 label 定義，都應該各自畫 reliability diagram。</p>
+          <p><strong>Confidence 不等於 probability：</strong> TypeSafe 的 Choice confidence，是根據最高機率與選項數計算的分布集中度。Noul 回傳 P(true)，沒有另一個獨立 confidence 欄位。</p>
+          <p><strong>轉場：</strong> 這讓 JEV 適合做 confidence-gated routing；卻不適合單獨掌控不可逆行動。</p>
+        </aside>
+        <footer class="source-footer">
+          <details><summary>Sources: TypeSafe calibration primer and confidence formula</summary><div class="source-pop">
+            <a href="https://docs.typesafe.ai/introduction/machine-learning-primer" target="_blank" rel="noreferrer">TypeSafe: calibration definition</a>
+            <a href="https://docs.typesafe.ai/confidence" target="_blank" rel="noreferrer">TypeSafe: confidence calculation</a>
+          </div></details><span class="slide-id">18</span>
+        </footer>
+      </section>
+
+      <section class="slide compact" data-short="Tool calling: a routing signal, not the whole brain" aria-label="Slide 19">
+        <div class="eyebrow">Recommended pattern · inference</div>
+        <h2>For bounded tool sets, JEV can provide a routing signal—not the entire agent brain</h2>
+        <div class="grid asym">
+          <div>
+            <div class="flow vertical">
+              <div class="flow-node">User request</div><div class="flow-arrow">↓</div>
+              <div class="flow-node highlight">JEV: candidate route + probability</div><div class="flow-arrow">↓</div>
+              <div class="flow-node">Policy + deterministic validation</div><div class="flow-arrow">↓</div>
+              <div class="flow-node">LLM: reasoning + argument construction</div><div class="flow-arrow">↓</div>
+              <div class="flow-node risk">Tool execution + outcome verification</div>
+            </div>
+          </div>
+          <div class="grid two" style="gap:14px;">
+            <div class="panel cyan-line">
+              <h3 class="green">Candidate fit—benchmark it</h3>
+              <ul class="small"><li>routing among known tools</li><li>allow / deny gates</li><li>request classification</li><li>risk screening / escalation</li><li>fixed action sets</li><li>high-volume, low-latency decisions</li></ul>
+            </div>
+            <div class="panel red-line">
+              <h3 class="red">Poor fit as sole authority</h3>
+              <ul class="small"><li>free-form argument generation</li><li>multi-step planning</li><li>unknown tools</li><li>correct answer may be absent</li><li>payments, deletion, or trading</li><li>exact math or dates</li></ul>
+            </div>
+            <div class="statement" style="grid-column:1/-1;font-size:24px;">Recommended role: a front-end routing signal behind policy and validation—not an independently proven safety gate.</div>
+          </div>
+        </div>
+        <aside class="presenter-notes" lang="zh-Hant">
+          <p><strong>時間：</strong> 1:30</p>
+          <p><strong>證據界線：</strong> TypeSafe 公開了 function-calling 與 confidence-routing pattern。這裡的架構是根據 API 與已知限制提出的工程建議，不是 JEV 已通過安全驗證的證據。</p>
+          <p><strong>條件式答案：</strong> 當 tool name 是封閉集合，而且 workload 已在該 domain 評估過，它才是可能合適的選項。tool argument 常包含自由文字、ID、數字與規劃，所以 generation 和 deterministic validation 仍然重要。</p>
+          <p><strong>安全規則：</strong> 低機率、none-of-the-above，或高風險行動，都必須 fallback、追問，或要求人工確認。執行後還要驗證結果。</p>
+          <p><strong>轉場：</strong> 一張廠商 latency 圖表不能決定是否採用。benchmark 必須同時量品質、穩健性與系統成本。</p>
+        </aside>
+        <footer class="source-footer">
+          <details><summary>Sources: TypeSafe function calling, confidence routing, and jaggedness</summary><div class="source-pop">
+            <a href="https://docs.typesafe.ai/cookbooks/function_calling" target="_blank" rel="noreferrer">Function calling cookbook</a>
+            <a href="https://docs.typesafe.ai/patterns/confidence-routing" target="_blank" rel="noreferrer">Confidence-gated routing</a>
+            <a href="https://docs.typesafe.ai/model-jaggedness/jev-1.13" target="_blank" rel="noreferrer">Jev 1.13 jaggedness</a>
+          </div></details><span class="slide-id">19</span>
+        </footer>
+      </section>
+
+      <section class="slide" data-short="A fair benchmark measures the whole system" aria-label="Slide 20">
+        <div class="eyebrow">Evaluation design</div>
+        <h2>A fair benchmark measures quality, robustness, and systems cost</h2>
+        <div class="matrix" aria-label="JEV benchmark matrix">
+          <div class="mh">Layer</div><div class="mh">Core metrics</div><div class="mh">Stress tests</div><div class="mh">Report slices</div><div class="mh">Failure signal</div>
+          <div class="rowh">Prediction quality</div><div>Accuracy, Macro-F1, AUROC, nDCG</div><div>None-of-the-above, missing info</div><div>zero-shot vs. fine-tuned</div><div>Valid format, wrong answer</div>
+          <div class="rowh">Probability quality</div><div>Brier, ECE, NLL, reliability</div><div>domain / regime shift</div><div>confidence buckets + CI</div><div>High-confidence error</div>
+          <div class="rowh">Selective behavior</div><div>Selective accuracy, risk–coverage</div><div>rejection / fallback</div><div>threshold by risk tier</div><div>Acts while uncertain</div>
+          <div class="rowh">Robustness</div><div>Consistency, worst-case delta</div><div>option order/name, paraphrase, injection, OOD</div><div>numbers / dates / long context</div><div>Small wording change flips answer</div>
+          <div class="rowh">Systems</div><div>p50 / p95 / p99, throughput, cost</div><div>cold start, concurrency, network</div><div>end-to-end + repeated runs</div><div>tail latency / failure rate</div>
+        </div>
+        <div class="grid three" style="gap:12px; margin-top:16px;">
+          <div class="panel"><h3>Minimum baselines</h3><p class="small">rules, logistic/XGBoost, embedding + linear</p></div>
+          <div class="panel"><h3>Adjacent baselines</h3><p class="small">cross-encoder, small local encoder, open decision model</p></div>
+          <div class="panel"><h3>Generative baselines</h3><p class="small">small LLM + constrained decoding, frontier LLM structured output</p></div>
+        </div>
+        <p class="tiny muted" style="margin-top:10px;">Use identical datasets, candidate sets, and success criteria. Report confidence intervals, and separate public benchmarks from your own domain.</p>
+        <aside class="presenter-notes" lang="zh-Hant">
+          <p><strong>時間：</strong> 1:45</p>
+          <p><strong>講法：</strong> 不要只量 accuracy 和 mean latency。production failure 常藏在 calibration、tail latency、order sensitivity，以及 fallback coverage 裡。</p>
+          <p><strong>Baselines：</strong> JEV 真正的對手通常不是 frontier LLM。它可能是 rules、XGBoost、cross-encoder，或一個 100M 的本地分類器。</p>
+          <p><strong>轉場：</strong> 我們把這套 systems view 放進一間只有一位店員的便利商店。模型延遲會直接改變顧客等待時間。</p>
+        </aside>
+        <footer class="source-footer">
+          <details><summary>Sources: TypeSafe evaluation methodology, Jev 1.13 jaggedness, and Decision Index</summary><div class="source-pop">
+            <a href="https://typesafe.ai/blog/introducing-system-one-models-and-jev" target="_blank" rel="noreferrer">TypeSafe workflow eval discussion</a>
+            <a href="https://docs.typesafe.ai/model-jaggedness/jev-1.13" target="_blank" rel="noreferrer">Official failure modes</a>
+            <a href="https://huggingface.co/spaces/multimodalart/jev-decision-index" target="_blank" rel="noreferrer">Jev Decision Index</a>
+          </div></details><span class="slide-id">20</span>
+        </footer>
+      </section>
+
+      <section class="slide" data-short="Store case: latency became customer experience" aria-label="Slide 21">
+        <div class="eyebrow">Applied case study · local benchmark</div>
+        <h2>In one local simulator, the best Laya policy outscored the best Gemma policy</h2>
+        <div class="case-grid" aria-label="Convenience-store benchmark results">
+          <article class="panel case-card">
+            <div class="metric-head"><span class="badge self">Local baseline</span><span class="case-latency">≈0 ms</span></div>
+            <h3>Rule-based</h3>
+            <div class="case-value">NT$1,246</div>
+            <div class="case-label">average revenue</div>
+            <div class="case-fact"><span>Abandoned</span><strong>2.9</strong></div>
+          </article>
+          <article class="panel case-card orange-line">
+            <div class="metric-head"><span class="badge self">Local Gemma 4</span><span class="case-latency">464 ms</span></div>
+            <h3>0.5 s tick · no WAIT</h3>
+            <div class="case-value orange">NT$1,195</div>
+            <div class="case-label">average revenue</div>
+            <div class="case-fact"><span>Abandoned</span><strong>3.3</strong></div>
+          </article>
+          <article class="panel case-card cyan-line">
+            <div class="metric-head"><span class="badge self">Local Laya</span><span class="case-latency cyan">63 ms</span></div>
+            <h3>0.1 s tick · no WAIT</h3>
+            <div class="case-value cyan">NT$1,281</div>
+            <div class="case-label">average revenue</div>
+            <div class="case-fact"><span>Abandoned</span><strong>2.8</strong></div>
+          </article>
+        </div>
+        <div class="grid asym case-bottom">
+          <div class="statement">
+            Best-policy comparison: Laya delivered <span class="cyan">+7.2% revenue</span> and <span class="green">15.2% fewer abandonments</span> than Gemma.
+          </div>
+          <div class="panel case-lesson">
+            <span class="badge inference">What changed</span>
+            <p><strong>Sub-second ticks exposed inference delay.</strong> At the same 1 s Laya tick, removing WAIT raised applied decisions from 30.8% to 100%.</p>
+          </div>
+        </div>
+        <p class="tiny muted case-caption">One clerk · 9 strategies × 10 matched demand seeds = 90 episodes · 300 simulated seconds each · warmed local models. Laya and Gemma used independently tuned tick policies, so this is a best-system comparison—not a model-only causal estimate.</p>
+        <aside class="presenter-notes" lang="zh-Hant">
+          <p><strong>時間：</strong> 0:55</p>
+          <p><strong>講法：</strong> 第一版粗粒度 simulation 把 latency 差異藏掉了。當 inference 期間的模擬時間繼續前進，測試過的最佳 Laya 設定，產生了比最佳 Gemma 設定更好的顧客結果。</p>
+          <p><strong>重要細節：</strong> 「90 episodes」是九種策略，分別跑在十組相同的顧客時程上；不是九十條互不相關的 demand trace。rule-based 仍是很強的 baseline。Laya 對它的優勢很小，而且不同 seed 之間並不一致。</p>
+          <p><strong>因果界線：</strong> Laya 使用 0.1 秒 tick；Gemma 使用 0.5 秒 tick；兩者都移除 WAIT。因此結果混合了模型、latency 與各自調整過的 policy，不能單獨歸因於架構。</p>
+          <p><strong>下一個控制實驗：</strong> 在完全相同的 simulator trajectory 上，比較 Gemma、zero-shot Laya、task-fine-tuned Laya，以及 supervised classifier。評估 label 應使用 action outcome，不要只用 teacher prediction。</p>
+          <p><strong>結論：</strong> 在這個 simulator 裡，快速 bounded-decision model 加上依 latency 調整的 policy，是測試過的最佳組合。要推廣到其他情境之前，必須在真實 workload 重跑。</p>
+          <p><strong>示範：</strong> 打開連結中的 report 看完整表格與原始摘要資料。</p>
+          <p><strong>轉場：</strong> 這就是 benchmark 必須涵蓋整個系統的原因。typed output 即使沒有 latency 問題，仍可能用其他方式失敗。</p>
+        </aside>
+        <footer class="source-footer">
+          <details><summary>Local evidence: full benchmark report and simulator</summary><div class="source-pop">
+            <a href="./assets/convenience-store-benchmark/report.md" target="_blank" rel="noreferrer">Open full benchmark report</a>
+            <a href="./assets/convenience-store-benchmark/summary.csv" target="_blank" rel="noreferrer">Open strategy summary (CSV)</a>
+            <a href="./assets/convenience-store-benchmark/summary.json" target="_blank" rel="noreferrer">Open strategy summary (JSON)</a>
+          </div></details><span class="slide-id">21</span>
+        </footer>
+      </section>
+
+      <section class="slide" data-short="Typed output can still be wrong" aria-label="Slide 22">
+        <div class="eyebrow">Known failure modes</div>
+        <h2>TypeSafe acknowledges that valid typed output still fails on order, numbers, and adversarial content</h2>
+        <div class="grid four" style="gap:14px;">
+          <div class="panel"><span class="badge official">Official</span><h3 style="margin-top:12px;">Literal / indirect</h3><p class="small">Literal readings dominate; double negatives and multi-hop indirection reduce accuracy.</p></div>
+          <div class="panel"><span class="badge official">Official</span><h3 style="margin-top:12px;">Math / dates</h3><p class="small">Counting, arithmetic, and date ordering are unreliable; keep exact computation in code.</p></div>
+          <div class="panel"><span class="badge official">Official</span><h3 style="margin-top:12px;">Order sensitivity</h3><p class="small">Choice order can change the answer, with a bias toward earlier options.</p></div>
+          <div class="panel"><span class="badge official">Official</span><h3 style="margin-top:12px;">Adversarial state</h3><p class="small">State is not assumed hostile; persuasive text or prompt injection can move the answer.</p></div>
+          <div class="panel"><span class="badge independent">Independent preprint</span><h3 style="margin-top:12px;">Probability incoherence</h3><p class="small">In a 160-item study, complementary claims missed summing to 1 by 0.064 on average; choice and yes/no forms could disagree.</p></div>
+          <div class="panel"><span class="badge independent">Independent preprint</span><h3 style="margin-top:12px;">Natural-context flips</h3><p class="small">Across four systems and seven datasets, an iterative context attack redirected 61.4–73.2% of initially correct cases within up to 64 accepted trials.</p></div>
+          <div class="panel"><span class="badge inference">Evaluation target</span><h3 style="margin-top:12px;">Weak rejection</h3><p class="small">If the right answer is absent, the model may confidently select the nearest-looking option.</p></div>
+          <div class="panel"><span class="badge inference">Evaluation target</span><h3 style="margin-top:12px;">Domain calibration</h3><p class="small">A new domain, label definition, or market regime can invalidate old thresholds.</p></div>
+        </div>
+        <div class="statement danger" style="margin-top:22px;">JEV may reduce format hallucination; it does not eliminate decision error.</div>
+        <aside class="presenter-notes" lang="zh-Hant">
+          <p><strong>時間：</strong> 1:40</p>
+          <p><strong>官方證據：</strong> Jev 1.13 jaggedness 是必讀文件。它明確列出 option order、數字與日期、context rot，以及 adversarial content 等問題。</p>
+          <p><strong>獨立證據：</strong> 兩篇都是 2026 年 arXiv preprint，不是 peer-reviewed replication。coherence study 有 160 個項目，並比較 Jev 與 Qwen3.8-27B 的 first-token readout。JevOut 報告四個系統、七個 dataset，以及最多接受 64 次 target evaluation 的 adaptive search。這些只能當成有範圍的警告，不能當成整體母群失敗率。</p>
+          <p><strong>轉場：</strong> 現在把「很快，但仍會答錯」接到最容易出現的高風險誤用：高速自動交易。</p>
+        </aside>
+        <footer class="source-footer">
+          <details><summary>Sources: official jaggedness, probability coherence, and JevOut</summary><div class="source-pop">
+            <a href="https://docs.typesafe.ai/model-jaggedness/jev-1.13" target="_blank" rel="noreferrer">TypeSafe: Jev 1.13 jaggedness</a>
+            <a href="https://arxiv.org/abs/2609.33209" target="_blank" rel="noreferrer">Beyond Calibration</a>
+            <a href="https://arxiv.org/abs/2609.30243" target="_blank" rel="noreferrer">JevOut</a>
+          </div></details><span class="slide-id">22</span>
+        </footer>
+      </section>
+
+      <section class="slide" data-short="Two trading self-reports with very different evidence" aria-label="Slide 23">
+        <div class="eyebrow">Trading stories</div>
+        <h2>Two self-reports: one unaudited claim; one one-day paper simulation</h2>
+        <div class="grid two">
+          <article class="panel red-line">
+            <div class="metric-head"><span class="badge unverified">Unverified self-report</span><span class="big-number red" style="font-size:54px;">−$31,680</span></div>
+            <h3 style="margin-top:16px;">Widely reposted X claim · archived copy</h3>
+            <p class="small">An archived showcase attributes a post to “Daily AI Tracker” claiming a JEV bot using on- and off-chain data had “so far” lost $31,680.</p>
+            <ul class="small">
+              <li>The accessible copy provides no auditable account, wallet, or trade log</li>
+              <li>Starting capital, leverage, strategy, and live-trading status are unknown</li>
+              <li>The original account and P&amp;L could not be independently authenticated</li>
+              <li>“Overnight” is not established by the archived wording</li>
+            </ul>
+          </article>
+          <article class="panel orange-line">
+            <div class="metric-head"><span class="badge self">Paper-trading experiment</span><span class="big-number orange" style="font-size:54px;">−$3,150</span></div>
+            <h3 style="margin-top:16px;">Reddit · More transparent, but only about 24 hours</h3>
+            <div class="grid two" style="gap:10px;">
+              <div><strong class="cyan">$100k</strong><br><span class="tiny muted">simulated starting capital</span></div>
+              <div><strong class="cyan">731 trades</strong><br><span class="tiny muted">every 30 sec, 3 CME micro futures</span></div>
+              <div><strong class="orange">−$1,650</strong><br><span class="tiny muted">approximately fees</span></div>
+              <div><strong class="red">−$1,500</strong><br><span class="tiny muted">loss before fees</span></div>
+            </div>
+            <p class="small" style="margin-top:18px;">The post includes guardrails and prompt details. But one day, one paper account, and one highly specific strategy cannot prove that JEV generally fails.</p>
+          </article>
+        </div>
+        <div class="statement warning" style="margin-top:22px; font-size:24px;">Neither self-report isolates JEV as the cause. Both illustrate why speed is not evidence of trading edge.</div>
+        <aside class="presenter-notes" lang="zh-Hant">
+          <p><strong>時間：</strong> 1:50</p>
+          <p><strong>務必分開：</strong> 31,680 美元是未經稽核的社群媒體說法，目前只能從 archived showcase 看到。約 3,150 美元則來自資訊較完整的 Reddit paper-trading 自報實驗。兩者不是同一件事。</p>
+          <p><strong>歸屬修正：</strong> archived copy 顯示的是「Daily AI Tracker」。本次 audit 查到的證據，不支持先前的 @MoonGotchi 歸屬。archive 寫的是「so far」，不是「overnight」。</p>
+          <p><strong>Repository 背景：</strong> 熱門的 jev-trader repository 預設使用 mock data 與 dry-run mode。README 清楚區分 live key 與 simulated fill。影片或 UI 不是經稽核的 P&amp;L。</p>
+          <p><strong>轉場：</strong> 就算預測只有一點點 edge，高決策頻率也可能透過交易成本，放大小錯誤。</p>
+        </aside>
+        <footer class="source-footer">
+          <details><summary>Sources: archived X claim, Reddit experiment, and jev-trader repository</summary><div class="source-pop">
+            <a href="https://jev.guide/ja/showcases/building-an-autonomous-trading-bot-with-jev-2101897628510494812" target="_blank" rel="noreferrer">Archived showcase of the $31,680 claim</a>
+            <a href="https://www.reddit.com/r/ai_trading/comments/1wkq4lt/i_let_jev_ai_trade_every_30_seconds_for_more_than/" target="_blank" rel="noreferrer">Reddit: 24-hour paper trade</a>
+            <a href="https://github.com/jarrodwatts/jev-trader" target="_blank" rel="noreferrer">jev-trader README</a>
+          </div></details><span class="slide-id">23</span>
+        </footer>
+      </section>
+
+      <section class="slide" data-short="Frequency amplifies edge—or friction" aria-label="Slide 24">
+        <div class="eyebrow">Causal chain</div>
+        <h2>If no edge is established, higher frequency mainly increases exposure to trading costs</h2>
+        <div class="risk-chain" role="img" aria-label="Causal chain from low latency to trading losses">
+          <div class="risk-step">Low latency<br>+ low per-call cost</div>
+          <div class="risk-step">Higher<br>decision frequency</div>
+          <div class="risk-step">More trades<br>and turnover</div>
+          <div class="risk-step">fees + spread<br>+ slippage + funding</div>
+          <div class="risk-step">No demonstrated<br>predictive edge</div>
+          <div class="risk-step">Negative net<br>expectancy compounds</div>
+        </div>
+        <div class="grid three" style="margin-top:30px;">
+          <div class="panel"><h3>Semantic knowledge ≠ alpha</h3><p class="small">Understanding news, indicators, and bullish language does not imply excess-return prediction.</p></div>
+          <div class="panel"><h3>Confidence ≠ expected return</h3><p class="small">Classification confidence does not encode payoff magnitude, fees, or tail risk.</p></div>
+          <div class="panel"><h3>Accuracy &gt; 50% can still lose</h3><p class="small">Position sizing, payoff ratio, and costs can make a high hit rate negative expectancy.</p></div>
+        </div>
+        <div class="statement danger" style="margin-top:22px; font-size:30px; text-align:center;">A low-latency model can execute a bad strategy quickly; it does not create edge.</div>
+        <aside class="presenter-notes" lang="zh-Hant">
+          <p><strong>時間：</strong> 1:25</p>
+          <p><strong>因果鏈：</strong> 前四個箭頭是機制。「沒有 edge」是一個必須用 out-of-sample 測試的條件。如果真的有 edge，速度可以放大利潤；如果沒有，速度只會放大摩擦成本。</p>
+          <p><strong>市場行為：</strong> non-stationarity、regime shift 與 crowding 都會讓 calibration 漂移。交易 label 必須包含時間 horizon 與 cost model。</p>
+          <p><strong>轉場：</strong> 安全架構不是 JEV 直接連 broker。JEV 必須放在 deterministic risk engine 的上游。</p>
+        </aside>
+        <footer class="source-footer">
+          <details><summary>Sources: Reddit experiment and jev-trader mechanics</summary><div class="source-pop">
+            <a href="https://www.reddit.com/r/ai_trading/comments/1wkq4lt/i_let_jev_ai_trade_every_30_seconds_for_more_than/" target="_blank" rel="noreferrer">Reddit: fees and trade frequency</a>
+            <a href="https://github.com/jarrodwatts/jev-trader" target="_blank" rel="noreferrer">jev-trader: per-block decisions and orders</a>
+          </div></details><span class="slide-id">24</span>
+        </footer>
+      </section>
+
+      <section class="slide" data-short="Safer experiment: the model cannot bypass risk controls" aria-label="Slide 25">
+        <div class="eyebrow">Recommended architecture · inference</div>
+        <h2>A safer trading experiment keeps the model upstream of a deterministic risk engine</h2>
+        <div class="grid asym">
+          <div class="safety-stack" role="img" aria-label="Layered architecture for a safer trading system">
+            <div class="safety-layer"><span class="name">Market data</span><span class="desc">timestamps, quality checks, survivorship and look-ahead protection</span></div>
+            <div class="safety-layer"><span class="name">Feature + signal engine</span><span class="desc">reproducible features and baseline signal</span></div>
+            <div class="safety-layer"><span class="name">JEV</span><span class="desc">signal filtering only; must include a no-trade option</span></div>
+            <div class="safety-layer"><span class="name">Calibration gate</span><span class="desc">threshold validated by asset, horizon, and regime</span></div>
+            <div class="safety-layer locked"><span class="name">Deterministic risk engine</span><span class="desc">no model output may bypass this layer</span></div>
+            <div class="safety-layer"><span class="name">Validation ladder</span><span class="desc">backtest → walk-forward → paper → shadow → small capital</span></div>
+          </div>
+          <div>
+            <div class="panel red-line">
+              <h3>The risk layer must have final authority</h3>
+              <div class="grid two" style="gap:8px 20px;">
+                <ul class="small"><li>No-trade option</li><li>Confidence threshold</li><li>Volatility filter</li><li>Symbol whitelist</li><li>Cooldown</li></ul>
+                <ul class="small"><li>Max position / leverage</li><li>Per-trade loss limit</li><li>Daily drawdown halt</li><li>Fee + slippage model</li><li>Kill switch</li></ul>
+              </div>
+            </div>
+            <div class="panel" style="margin-top:14px;"><h3>Auditability</h3><p class="small">Log complete state, question schema, raw probabilities, model version, policy decision, order, fill, cost, and fallback.</p></div>
+            <div class="statement warning" style="margin-top:14px; font-size:23px;">The model may provide a signal. It may not bypass the risk engine.</div>
+          </div>
+        </div>
+        <aside class="presenter-notes" lang="zh-Hant">
+          <p><strong>時間：</strong> 1:30</p>
+          <p><strong>證據界線：</strong> 這是依照標準風險分離與引用實作模式提出的 normative engineering recommendation。它不是已被證明的 JEV 架構，也不能保證交易安全。</p>
+          <p><strong>強調：</strong> confidence threshold 不是 risk management；它只是在篩選模型不確定性。position limit、drawdown halt 與 kill switch 都應該保留為 deterministic code。</p>
+          <p><strong>驗證階梯：</strong> 任何一個階段失敗，就不要往下一階段走。shadow mode 只產生訊號、不送出訂單，因此能暴露即時 distribution shift。</p>
+          <p><strong>轉場：</strong> 回到開場問題：這是有用的工程、重新包裝，還是 hype？答案是三者都有，但比例可以判斷。</p>
+        </aside>
+        <footer class="source-footer">
+          <details><summary>Sources: TypeSafe confidence routing, trading experiment, and Hyperliquid implementation</summary><div class="source-pop">
+            <a href="https://docs.typesafe.ai/patterns/confidence-routing" target="_blank" rel="noreferrer">TypeSafe: confidence routing</a>
+            <a href="https://www.reddit.com/r/ai_trading/comments/1wkq4lt/i_let_jev_ai_trade_every_30_seconds_for_more_than/" target="_blank" rel="noreferrer">Paper-trading experiment</a>
+            <a href="https://github.com/aowang-ai/jev-trade" target="_blank" rel="noreferrer">jev-trade implementation</a>
+          </div></details><span class="slide-id">25</span>
+        </footer>
+      </section>
+
+      <section class="slide compact" data-short="Verdict: useful contract, unproven moat" aria-label="Slide 26">
+        <div class="eyebrow">Final assessment</div>
+        <h2>JEV offers a useful product contract; architecture-level novelty and broad superiority remain unproven</h2>
+        <div class="verdict-scale">
+          <div class="verdict"><div class="score">✓</div><h3>Useful engineering</h3><p class="small">Decision-only workloads are common; avoiding decode can reduce latency and cost; typed values integrate cleanly.</p></div>
+          <div class="verdict"><div class="score purple">↻</div><h3>Clever repackaging</h3><p class="small">Encoders, classification, ranking, distillation, and calibration are not new; the product contract is unusually clear.</p></div>
+          <div class="verdict"><div class="score orange">?</div><h3>Undisclosed moat</h3><p class="small">It may lie in data, training, and serving—but the architecture and RLCD recipe cannot be audited independently.</p></div>
+          <div class="verdict"><div class="score red">!</div><h3>Branding risk</h3><p class="small">“System One” is TypeSafe’s category claim. “Cannot hallucinate” is defensible only for schema-invalid output—not decision error.</p></div>
+        </div>
+        <div class="grid two" style="margin-top:26px;">
+          <div class="panel cyan-line"><h3>Why it is not a gimmick</h3><p class="small">Routing, ranking, filtering, moderation, triage, and judge or verifier workloads may become cheaper.</p></div>
+          <div class="panel red-line"><h3>What the evidence does not support</h3><p class="small">A new neural primitive, universal cross-domain wins, confidence-only high-risk actions, or clone equivalence.</p></div>
+        </div>
+        <div class="statement" style="margin-top:22px; text-align:center;">JEV’s strongest role is replacing expensive LLM calls that were really just choosing among fixed options.</div>
+        <aside class="presenter-notes" lang="zh-Hant">
+          <p><strong>時間：</strong> 1:30</p>
+          <p><strong>條件式判斷：</strong> 如果 workload 是高流量、對 latency 或成本敏感的 bounded semantic decision，而且有安全 fallback，這就是合理產品。它不是 planning、generation、精確計算，或不可逆執行的完整解法。</p>
+          <p><strong>立場：</strong> 這份 deck 的判斷是：產品化有價值；技術主張目前仍無法獨立稽核；行銷語言則很容易被讀過頭。</p>
+          <p><strong>轉場：</strong> 把最常見的兩個問題，壓縮成三十秒答案。</p>
+        </aside>
+        <footer class="source-footer">
+          <details><summary>Sources: TypeSafe announcement, official limitations, and open ecosystem</summary><div class="source-pop">
+            <a href="https://typesafe.ai/blog/introducing-system-one-models-and-jev" target="_blank" rel="noreferrer">TypeSafe announcement</a>
+            <a href="https://docs.typesafe.ai/model-jaggedness/jev-1.13" target="_blank" rel="noreferrer">Jev 1.13 jaggedness</a>
+            <a href="https://github.com/ollaya-dev/ollaya" target="_blank" rel="noreferrer">Ollaya ecosystem</a>
+          </div></details><span class="slide-id">26</span>
+        </footer>
+      </section>
+
+      <section class="slide" data-short="30 seconds: contract copied, internals unknown" aria-label="Slide 27">
+        <div class="eyebrow">Screenshot this</div>
+        <h2>The interface has been copied; architectural and capability equivalence have not</h2>
+        <div class="grid two" style="margin-top:28px;">
+          <article class="answer-block">
+            <h3>Why is JEV fast?</h3>
+            <p>TypeSafe reports that Jev returns typed decisions without answer-text generation and evaluates multiple questions in parallel.</p>
+            <div class="small muted">This removes output-length-dependent decoding. Model size, architecture, hardware, batching, and serving contribution are undisclosed.</div>
+          </article>
+          <article class="answer-block">
+            <h3>Why did open replications appear so quickly?</h3>
+            <p>The request/response contract is observable, and known classifiers, rankers, encoder heads, and decoder readouts can implement compatible behavior.</p>
+            <div class="small muted">That proves interface reproducibility—not Jev’s architecture, TypeSafe’s RLCD recipe, or matched zero-shot, calibration, and long-tail performance.</div>
+          </article>
+        </div>
+        <div class="statement warning" style="margin-top:34px; font-size:36px; text-align:center;">In short: compatible behavior is demonstrated; equivalent internals and capability are not.</div>
+        <div class="center muted small" style="margin-top:20px;">Typed output guarantees that an answer is valid—not that it is worth executing.</div>
+        <aside class="presenter-notes" lang="zh-Hant">
+          <p><strong>時間：</strong> 0:55</p>
+          <p><strong>講法：</strong> 停三秒，讓聽眾把這一頁拍下來。[停頓] 這兩個區塊應該能直接回答同事的問題。</p>
+          <p><strong>收束：</strong> 回到第一頁。同一個 bounded-output 設計，同時解釋了速度、快速出現相容替代方案，以及風險界線。</p>
+          <p><strong>轉場：</strong> 最後用實際問題，把論證帶回聽眾自己的系統。不要停在一張空白 Q&amp;A。</p>
+        </aside>
+        <footer class="source-footer">
+          <details><summary>Sources: TypeSafe announcement and primary open-source materials</summary><div class="source-pop">
+            <a href="https://typesafe.ai/blog/introducing-system-one-models-and-jev" target="_blank" rel="noreferrer">TypeSafe: parallel typed outputs</a>
+            <a href="https://huggingface.co/convaiinnovations/laya" target="_blank" rel="noreferrer">Laya architecture &amp; limitations</a>
+            <a href="https://github.com/denis-pplx/autojev" target="_blank" rel="noreferrer">AutoJev implementation</a>
+          </div></details><span class="slide-id">27</span>
+        </footer>
+      </section>
+
+      <section class="slide" data-short="Discussion: which decisions belong here?" aria-label="Slide 28">
+        <div class="eyebrow">Discussion</div>
+        <h2>The important question is not “Does it resemble an LLM?” but “Which decisions should it own?”</h2>
+        <div class="question-list" style="margin-top:20px;">
+          <div class="question">Is JEV a new model category or a productized general-purpose classifier—and does the distinction matter?</div>
+          <div class="question">When is JEV a better trade than a small local cross-encoder?</div>
+          <div class="question">Is confidence ever enough to trigger an irreversible action, or should there always be a second gate?</div>
+          <div class="question">Which benchmark would best reveal value beyond speed?</div>
+          <div class="question">Which generation call in our system is actually a fixed-option decision?</div>
+          <div class="question">With production data, will a domain-specific open model beat a hosted zero-shot model?</div>
+        </div>
+        <div class="statement" style="margin-top:28px; text-align:center; font-size:30px;">The engineering question is not “Can we connect JEV?” It is “What does one mistake cost, where is the fallback, and how do we verify the result?”</div>
+        <aside class="presenter-notes" lang="zh-Hant">
+          <p><strong>時間：</strong> 討論 5–10 分鐘</p>
+          <p><strong>引導：</strong> 從問題 5 開始，請每個人說出自己系統裡的一個 call。再用問題 3 挖出風險門檻，最後用問題 6 討論 build versus buy。</p>
+          <p><strong>最後一句：</strong> JEV 真正的啟示不在品牌名稱，而是有些 generation call 本質上其實是 bounded decision；但這些決策仍然需要量測、驗證，以及 fallback。</p>
+        </aside>
+        <footer class="source-footer">
+          <details><summary>Sources: TypeSafe building patterns and JEV-as-a-Judge cascade</summary><div class="source-pop">
+            <a href="https://docs.typesafe.ai/concepts/how-to-build-with-system-one" target="_blank" rel="noreferrer">TypeSafe: building patterns</a>
+            <a href="https://arxiv.org/abs/2609.26550" target="_blank" rel="noreferrer">JEV-as-a-Judge: accept / escalate cascade</a>
+          </div></details><span class="slide-id">28</span>
+        </footer>
+      </section>
+
+    </main>
+
+    <nav class="controls" aria-label="Slide controls">
+      <div class="control-group">
+        <button class="control-btn" type="button" data-action="prev" aria-label="Previous slide">←</button>
+        <button class="control-btn" type="button" data-action="next" aria-label="Next slide">→</button>
+      </div>
+      <div class="progress-track" aria-label="Presentation progress"><div class="progress-bar"></div></div>
+      <div class="control-group">
+        <span class="counter" aria-label="Current slide">01 / 28</span>
+        <button class="control-btn" type="button" data-action="overview" aria-label="Slide overview" title="Overview (O)">▦</button>
+        <button class="control-btn" type="button" data-action="notes" aria-label="Presenter notes" aria-pressed="false" title="Presenter notes (N)">☷</button>
+        <button class="control-btn" type="button" data-action="fullscreen" aria-label="Fullscreen" aria-pressed="false" title="Fullscreen (F)">⛶</button>
+        <button class="control-btn" type="button" data-action="print" aria-label="Print or export PDF" title="Print / PDF">⎙</button>
+      </div>
+    </nav>
+  </div>
+
+  <div class="overview" hidden aria-hidden="true" role="dialog" aria-modal="true" aria-label="Slide overview">
+    <div class="overview-head"><h2 style="margin:0;">Slide overview</h2><button class="control-btn" type="button" data-action="close-overview" aria-label="Close overview">×</button></div>
+    <div class="overview-grid"></div>
+  </div>
+
+  <aside class="notes-panel" hidden aria-hidden="true" aria-label="Presenter notes">
+    <h3>Presenter notes</h3><div class="notes-body"></div>
+  </aside>
+
+  <script src="./slides.js?v=20261013-laya-forward-pass"></script>
+</body>
+</html>
